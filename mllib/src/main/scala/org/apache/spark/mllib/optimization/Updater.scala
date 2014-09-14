@@ -192,7 +192,7 @@ abstract class MultiModelUpdater extends Serializable {
       gradient: DenseMatrix,
       stepSize: DenseMatrix,
       iter: Int,
-      regParam: DenseMatrix): (DenseMatrix, Matrix)
+      regParam: Matrix): (DenseMatrix, Matrix)
 }
 
 /**
@@ -207,9 +207,9 @@ class MultiModelSimpleUpdater extends MultiModelUpdater {
      gradient: DenseMatrix,
      stepSize: DenseMatrix,
      iter: Int,
-     regParam: DenseMatrix): (DenseMatrix, Matrix) = {
+     regParam: Matrix): (DenseMatrix, Matrix) = {
     val thisIterStepSize =
-      DenseMatrix.diag(Vectors.dense(stepSize.map(-_ / sqrt(iter)).toArray))
+      SparseMatrix.diag(Vectors.dense(stepSize.map(-_ / sqrt(iter)).toArray))
 
     gemm(1.0, gradient,thisIterStepSize, 1.0, weightsOld)
 
@@ -243,18 +243,15 @@ class MultiModelL1Updater extends MultiModelUpdater {
                         gradient: DenseMatrix,
                         stepSize: DenseMatrix,
                         iter: Int,
-                        regParam: DenseMatrix): (DenseMatrix, Matrix) = {
+                        regParam: Matrix): (DenseMatrix, Matrix) = {
     val thisIterStepSize =
-       DenseMatrix.diag(Vectors.dense(stepSize.map(-_ / sqrt(iter)).toArray))
+       SparseMatrix.diag(Vectors.dense(stepSize.map(-_ / sqrt(iter)).toArray))
 
     // Take gradient step
-    //println(s"\n$iter:")
-    //println(s"\n$gradient\n")
     gemm(1.0, gradient,thisIterStepSize, 1.0, weightsOld)
-    //println(s"\n$weightsOld\n")
     // Apply proximal operator (soft thresholding)
     val shrinkageVal = regParam.elementWiseOperate(_ * _, thisIterStepSize)
-    //println(s"\n$shrinkageVal\n")
+
     var j = 0
     while (j < weightsOld.numCols){
       var i = 0
@@ -265,7 +262,6 @@ class MultiModelL1Updater extends MultiModelUpdater {
       }
       j += 1
     }
-    //println(s"\n$weightsOld\n")
 
     (weightsOld, weightsOld.colNorms(1.0) timesInPlace regParam)
   }
@@ -283,16 +279,16 @@ class MultiModelSquaredL2Updater extends MultiModelUpdater {
                         gradient: DenseMatrix,
                         stepSize: DenseMatrix,
                         iter: Int,
-                        regParam: DenseMatrix): (DenseMatrix, Matrix) = {
+                        regParam: Matrix): (DenseMatrix, Matrix) = {
     // add up both updates from the gradient of the loss (= step) as well as
     // the gradient of the regularizer (= regParam * weightsOld)
     // w' = w - thisIterStepSize * (gradient + regParam * w)
     // w' = (1 - thisIterStepSize * regParam) * w - thisIterStepSize * gradient
     val thisIterStepSize =
-      DenseMatrix.diag(Vectors.dense(stepSize.map(-_ / sqrt(iter)).toArray))
+      SparseMatrix.diag(Vectors.dense(stepSize.map(-_ / sqrt(iter)).toArray))
 
     weightsOld timesInPlace thisIterStepSize.elementWiseOperate(_ * _, regParam).
-      elementWiseOperateInPlace(_ + _, DenseMatrix.eye(thisIterStepSize.numRows))
+      elementWiseOperateInPlace(_ + _, Matrices.speye(thisIterStepSize.numRows))
 
     gemm(1.0, gradient,thisIterStepSize, 1.0, weightsOld)
 

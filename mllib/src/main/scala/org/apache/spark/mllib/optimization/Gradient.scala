@@ -199,37 +199,61 @@ abstract class MultiModelGradient extends Serializable {
 @DeveloperApi
 class MultiModelLogisticGradient extends MultiModelGradient {
 
-  def sigmoid(p: DenseMatrix): DenseMatrix = {
+  private def sigmoid(p: DenseMatrix): DenseMatrix = {
     def takeSigmoid(p: Double): Double = {
-      1.0 / (math.exp(p * -1.0) + 1.0)
+      1.0 / (math.exp(-p) + 1.0)
     }
-    p.update(takeSigmoid)
+    p.map(takeSigmoid)
   }
 
   override def compute(data: Matrix, label: DenseMatrix,
                        weights: DenseMatrix): (DenseMatrix, Matrix) = {
-
-    val margin = sigmoid(data times weights)
-
+    val margin = data times weights
     val gradient = DenseMatrix.zeros(weights.numRows, weights.numCols)
 
-    gemm(true, false, 1.0, data, margin.elementWiseOperateOnColumns(_ - _, label), 0.0, gradient)
+    gemm(true, false, 1.0, data, sigmoid(margin).elementWiseOperateOnColumnsInPlace(_ - _, label),
+      0.0, gradient)
 
-    val loss = (margin.update(1.0 / _) += 1).update(math.log).colSums
+    val negativeLabels = label.compare(0.0, _ == _)
+    val addMargin = margin.elementWiseOperateOnColumns(_ * _, negativeLabels)
 
-    (gradient, loss)
+    val loss = margin.update(v => math.log1p(math.exp(-v))).
+      elementWiseOperateInPlace(_ + _, addMargin)
+
+    val lossVector =
+      if (data.isInstanceOf[DenseMatrix]) {
+        val numFeatures = data.numCols
+        val zeroEntries = data.compare(0.0, _ == _)
+        val shouldSkip = zeroEntries.rowSums.compareInPlace(numFeatures, _ == _)
+        loss.colSums(false, shouldSkip)
+      } else {
+        loss.colSums
+      }
+    (gradient, lossVector)
   }
 
   override def compute(data: Matrix,
                        label: DenseMatrix,
                        weights: DenseMatrix,
                        cumGradient: DenseMatrix): Matrix = {
+    val margin = data times weights
+    gemm(true, false, 1.0, data, sigmoid(margin).elementWiseOperateOnColumnsInPlace(_ - _, label),
+      1.0, cumGradient)
 
-    val margin = sigmoid(data times weights)
+    val negativeLabels = label.compare(0.0, _ == _)
+    val addMargin = margin.elementWiseOperateOnColumns(_ * _, negativeLabels)
 
-    gemm(true, false, 1.0, data, margin.elementWiseOperateOnColumns(_ - _, label), 1.0, cumGradient)
+    val loss = margin.update(v => math.log1p(math.exp(-v))).
+      elementWiseOperateInPlace(_ + _, addMargin)
 
-    (margin.update(1.0 / _) += 1).update(math.log).colSums
+    if (data.isInstanceOf[DenseMatrix]) {
+      val numFeatures = data.numCols
+      val zeroEntries = data.compare(0.0, _ == _)
+      val shouldSkip = zeroEntries.rowSums.compareInPlace(numFeatures, _ == _)
+      loss.colSums(false, shouldSkip)
+    } else {
+      loss.colSums
+    }
   }
 }
 
@@ -246,25 +270,42 @@ class MultiModelLeastSquaresGradient extends MultiModelGradient {
                        weights: DenseMatrix): (DenseMatrix, Matrix) = {
 
     val diff = (data times weights).elementWiseOperateOnColumnsInPlace(_ - _, label)
-    val loss = diff.map(v => v * v).colSums
 
     val gradient = DenseMatrix.zeros(weights.numRows, weights.numCols)
 
     gemm(true, false, 2.0, data, diff, 0.0, gradient)
 
-    (gradient, loss)
+    val loss = diff.update(v => v * v)
+
+    val lossVector =
+      if (data.isInstanceOf[DenseMatrix]) {
+        val numFeatures = data.numCols
+        val zeroEntries = data.compare(0.0, _ == _)
+        val shouldSkip = zeroEntries.rowSums.compareInPlace(numFeatures, _ == _)
+        loss.colSums(false, shouldSkip)
+      } else {
+        loss.colSums
+      }
+    (gradient, lossVector)
   }
 
   override def compute(data: Matrix,
                        label: DenseMatrix,
                        weights: DenseMatrix,
                        cumGradient: DenseMatrix): Matrix = {
-
     val diff = (data times weights).elementWiseOperateOnColumnsInPlace(_ - _, label)
 
     gemm(true, false, 2.0, data, diff, 1.0, cumGradient)
+    val loss = diff.update(v => v * v)
 
-    diff.map(v => v * v).colSums
+    if (data.isInstanceOf[DenseMatrix]) {
+      val numFeatures = data.numCols
+      val zeroEntries = data.compare(0.0, _ == _)
+      val shouldSkip = zeroEntries.rowSums.compareInPlace(numFeatures, _ == _)
+      loss.colSums(false, shouldSkip)
+    } else {
+      loss.colSums
+    }
   }
 }
 
@@ -293,8 +334,18 @@ class MultiModelHingeGradient extends MultiModelGradient {
 
     gemm(true, false, 1.0, gradientMultiplier, activeExamples, 1.0, gradient)
 
-    (gradient, activeExamples.elementWiseOperateInPlace(_ * _, dotProduct).colSums)
+    val loss = activeExamples.elementWiseOperateInPlace(_ * _, dotProduct.update(1 - _))
 
+    val lossVector =
+      if (data.isInstanceOf[DenseMatrix]) {
+        val numFeatures = data.numCols
+        val zeroEntries = data.compare(0.0, _ == _)
+        val shouldSkip = zeroEntries.rowSums.compareInPlace(numFeatures, _ == _)
+        loss.colSums(false, shouldSkip)
+      } else {
+        loss.colSums
+      }
+    (gradient, lossVector)
   }
 
   override def compute(data: Matrix, label: DenseMatrix,
@@ -311,6 +362,15 @@ class MultiModelHingeGradient extends MultiModelGradient {
 
     gemm(true, false, 1.0, gradientMultiplier, activeExamples, 1.0, cumGradient)
 
-    activeExamples.elementWiseOperateInPlace(_ * _, dotProduct).colSums
+    val loss = activeExamples.elementWiseOperateInPlace(_ * _, dotProduct.update(1 - _))
+
+    if (data.isInstanceOf[DenseMatrix]) {
+      val numFeatures = data.numCols
+      val zeroEntries = data.compare(0.0, _ == _)
+      val shouldSkip = zeroEntries.rowSums.compareInPlace(numFeatures, _ == _)
+      loss.colSums(false, shouldSkip)
+    } else {
+      loss.colSums
+    }
   }
 }

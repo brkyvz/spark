@@ -182,11 +182,11 @@ object MultiModelGradientDescent extends Logging {
         for (i <- 1 to regParam.length) yield ss
       }
     )
-    val regMatrix = Matrices.diag(Vectors.dense(stepSize.flatMap{ ss =>
+    val regMatrix = SparseMatrix.diag(Vectors.dense(stepSize.flatMap{ ss =>
       for (reg <- regParam) yield reg
-    })).asInstanceOf[DenseMatrix]
-
-    val points = Matrices.fromRDD(data)
+    }))
+    val bcMetaData = data.context.broadcast(Matrices.getSparsityData(data))
+    val points = Matrices.fromRDD(data, bcMetaData.value)
     /**
      * For the first iteration, the regVal will be initialized as sum of weight squares
      * if it's L2 updater; for L1 updater, the same logic is followed.
@@ -199,8 +199,6 @@ object MultiModelGradientDescent extends Logging {
     }
     val orderedIters = numIterations.sorted
     var iterIndexCounter = 0
-
-    //println(s"initial:\n$weights\n\n")
     for (i <- 1 to maxNumIter) {
       val bcWeights = data.context.broadcast(weights)
       // Sample a subset (fraction miniBatchFraction) of the total data
@@ -213,14 +211,14 @@ object MultiModelGradientDescent extends Logging {
               gradient.compute(features, label, bcWeights.value(j),
                 grad(j).asInstanceOf[DenseMatrix])
             }
-            (grad, loss.zip(l).map(r => r._1.elementWiseOperate(_ + _, r._2)))
+            (grad, loss.zip(l).map(r => r._1.elementWiseOperateInPlace(_ + _, r._2)))
           },
           combOp = (c1, c2) => (c1, c2) match { case ((grad1, loss1), (grad2, loss2)) =>
             (grad1.zip(grad2).map(r => r._1.elementWiseOperateInPlace(_ + _, r._2)),
               loss1.zip(loss2).map(r => r._1.elementWiseOperateInPlace(_ + _, r._2)))
           })
 
-      stochasticLossHistory.append(Vectors.dense(Matrices.horzCat(updaterCounter.map { i=>
+      stochasticLossHistory.append(Vectors.dense(Matrices.horzCat(updaterCounter.map { i =>
         lossSum(i).elementWiseOperateScalarInPlace(_ / _, miniBatchSize).
         elementWiseOperateOnRowsInPlace(_ + _, regVal(i))
       }).toArray))

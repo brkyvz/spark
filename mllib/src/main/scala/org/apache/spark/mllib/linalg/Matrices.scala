@@ -18,8 +18,12 @@
 package org.apache.spark.mllib.linalg
 
 import breeze.linalg.{Matrix => BM, DenseMatrix => BDM, CSCMatrix => BSM}
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.random.XORShiftRandom
+import org.apache.spark.util.Utils
+
+import scala.collection.mutable.{ArrayBuffer, PriorityQueue}
 
 /**
  * Trait for a local matrix.
@@ -53,8 +57,9 @@ trait Matrix extends Serializable {
   /** Get a deep copy of the matrix. */
   def copy: Matrix
 
-  /** Convenience method for `Matrix`-`DenseMatrix` multiplication. */
-  def times(y: DenseMatrix): DenseMatrix = {
+  /** Convenience method for `Matrix`-`Matrix` multiplication.
+    * Note: `SparseMatrix`-`SparseMatrix` multiplication is not supported */
+  def times(y: Matrix): DenseMatrix = {
     val C: DenseMatrix = Matrices.zeros(numRows, y.numCols).asInstanceOf[DenseMatrix]
     BLAS.gemm(false, false, 1.0, this, y, 0.0, C)
     C
@@ -63,8 +68,9 @@ trait Matrix extends Serializable {
   /** Convenience method for `Matrix`-`DenseVector` multiplication. */
   def times(y: DenseVector): DenseVector = BLAS.gemv(1.0, this, y)
 
-  /** Convenience method for `Matrix`^T^-`DenseMatrix` multiplication. */
-  def transposeTimes(y: DenseMatrix): DenseMatrix = {
+  /** Convenience method for `Matrix`^T^-`Matrix` multiplication.
+    * Note: `SparseMatrix`-`SparseMatrix` multiplication is not supported */
+  def transposeTimes(y: Matrix): DenseMatrix = {
     val C: DenseMatrix = Matrices.zeros(numCols, y.numCols).asInstanceOf[DenseMatrix]
     BLAS.gemm(true, false, 1.0, this, y, 0.0, C)
     C
@@ -135,10 +141,6 @@ trait Matrix extends Serializable {
 
   private[mllib] def /(y: Double) = elementWiseOperateScalar(_ / _, y)
 
-  private[mllib] def signum: Matrix
-
-  private[mllib] def signumInPlace: Matrix
-
   private[mllib] def neg: Matrix
 
   private[mllib] def negInPlace: Matrix
@@ -151,7 +153,7 @@ trait Matrix extends Serializable {
 
   private[mllib] def colSums: DenseMatrix = colSums(false)
 
-  private[mllib] def colSums(absolute: Boolean): DenseMatrix = {
+  private[mllib] def colSums(absolute: Boolean, skipRows: DenseMatrix = null): DenseMatrix = {
     val sums = new DenseMatrix(1, numCols, Array.fill(numCols)(0.0))
     var j = 0
     this match {
@@ -171,9 +173,51 @@ trait Matrix extends Serializable {
         while (j < numCols){
           var i = 0
           while (i < numRows){
-            var v = dense.values(index(i,j))
+            if (skipRows == null) {
+              var v = dense.values(index(i, j))
+              if (absolute) v = math.abs(v)
+              sums.values(j) += v
+            } else {
+              if (skipRows(i) != 1.0) {
+                var v = dense.values(index(i, j))
+                if (absolute) v = math.abs(v)
+                sums.values(j) += v
+              }
+            }
+
+            i += 1
+          }
+          j += 1
+        }
+    }
+    sums
+  }
+
+  private[mllib] def rowSums: DenseMatrix = rowSums(false)
+
+  private[mllib] def rowSums(absolute: Boolean): DenseMatrix = {
+    val sums = new DenseMatrix(numRows, 1, Array.fill(numRows)(0.0))
+    var j = 0
+    this match {
+      case sparse: SparseMatrix =>
+        while (j < numCols){
+          var i = sparse.colPtrs(j)
+          val indEnd = sparse.colPtrs(j + 1)
+          while (i < indEnd){
+            var v = sparse.values(i)
             if (absolute) v = math.abs(v)
-            sums.update(0, j, sums(j) + v)
+            sums.values(sparse.rowIndices(i)) += v
+            i += 1
+          }
+          j += 1
+        }
+      case dense: DenseMatrix =>
+        while (j < numCols){
+          var i = 0
+          while (i < numRows){
+            var v = dense.values(index(i, j))
+            if (absolute) v = math.abs(v)
+            sums.values(i) += v
             i += 1
           }
           j += 1
@@ -182,6 +226,8 @@ trait Matrix extends Serializable {
     sums
   }
 }
+
+
 
 /**
  * Column-majored dense matrix.
@@ -219,63 +265,66 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
 
   override def copy = new DenseMatrix(numRows, numCols, values.clone())
 
-  def elementWiseOperateOnColumnsInPlace(
+  private[mllib] def elementWiseOperateOnColumnsInPlace(
       f: (Double, Double) => Double,
       y: Matrix): DenseMatrix = {
     val y_vals = y.toArray
     val len = y_vals.length
     require(y_vals.length == numRows)
-    var j=0
+    var j = 0
     while (j < numCols){
-      var i=0
+      var i = 0
       while (i < len){
-        val idx = index(i,j)
-        values(idx) = f(values(idx),y_vals(i))
+        val idx = index(i, j)
+        values(idx) = f(values(idx), y_vals(i))
         i += 1
       }
-      j += 1
-    }
-    this
-  }
-  def elementWiseOperateOnRowsInPlace(
-     f: (Double, Double) => Double,
-     y: Matrix): DenseMatrix = {
-    val y_vals = y.toArray
-    require(y_vals.length == numCols)
-    var j=0
-    while (j < numCols){
-      var i=0
-      while (i < numRows){
-        val idx = index(i,j)
-        values(idx) = f(values(idx),y_vals(j))
-        i += 1
-      }
-      j += 1
-    }
-    this
-  }
-  def elementWiseOperateInPlace(f: (Double, Double) => Double, y: Matrix): DenseMatrix =  {
-    val y_val = y.toArray
-    val len = values.length
-    require(y_val.length == values.length)
-    var j = 0
-    while (j < len){
-      values(j) = f(values(j),y_val(j))
-      j += 1
-    }
-    this
-  }
-  def elementWiseOperateScalarInPlace(f: (Double, Double) => Double, y: Double): DenseMatrix =  {
-    var j = 0
-    val len = values.length
-    while (j < len){
-      values(j) = f(values(j),y)
       j += 1
     }
     this
   }
 
-  def operateInPlace(f: (Double, Double) => Double, y: Matrix): DenseMatrix = {
+  private[mllib] def elementWiseOperateOnRowsInPlace(
+     f: (Double, Double) => Double,
+     y: Matrix): DenseMatrix = {
+    val y_vals = y.toArray
+    require(y_vals.length == numCols)
+    var j = 0
+    while (j < numCols){
+      var i = 0
+      while (i < numRows){
+        val idx = index(i, j)
+        values(idx) = f(values(idx), y_vals(j))
+        i += 1
+      }
+      j += 1
+    }
+    this
+  }
+
+  private[mllib] def elementWiseOperateInPlace(f: (Double, Double) => Double, y: Matrix): DenseMatrix =  {
+    val y_val = y.toArray
+    val len = values.length
+    require(y_val.length == values.length)
+    var j = 0
+    while (j < len){
+      values(j) = f(values(j), y_val(j))
+      j += 1
+    }
+    this
+  }
+
+  private[mllib] def elementWiseOperateScalarInPlace(f: (Double, Double) => Double, y: Double): DenseMatrix =  {
+    var j = 0
+    val len = values.length
+    while (j < len){
+      values(j) = f(values(j), y)
+      j += 1
+    }
+    this
+  }
+
+  private[mllib] def operateInPlace(f: (Double, Double) => Double, y: Matrix): DenseMatrix = {
     if (y.numCols==1 || y.numRows == 1){
       require(numCols != numRows, "Operation is ambiguous. Please use elementWiseOperateOnRows " +
         "or elementWiseOperateOnColumns instead")
@@ -284,7 +333,7 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
       elementWiseOperateScalarInPlace(f, y.toArray(0))
     } else {
       if (y.numCols==1) {
-        elementWiseOperateOnColumnsInPlace(f,y)
+        elementWiseOperateOnColumnsInPlace(f, y)
       }else if (y.numRows==1){
         elementWiseOperateOnRowsInPlace(f, y)
       }else{
@@ -293,26 +342,29 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
     }
   }
 
-  def elementWiseOperateOnColumns(f: (Double, Double) => Double, y: Matrix): DenseMatrix = {
+  private[mllib] def elementWiseOperateOnColumns(f: (Double, Double) => Double, y: Matrix): DenseMatrix = {
     val dup = this.copy
-    dup.elementWiseOperateOnColumnsInPlace(f,y)
-  }
-  def elementWiseOperateOnRows(f: (Double, Double) => Double, y: Matrix): DenseMatrix = {
-    val dup = this.copy
-    dup.elementWiseOperateOnRowsInPlace(f,y)
-  }
-  def elementWiseOperate(f: (Double, Double) => Double, y: Matrix): DenseMatrix =  {
-    val dup = this.copy
-    dup.elementWiseOperateInPlace(f,y)
-  }
-  def elementWiseOperateScalar(f: (Double, Double) => Double, y: Double): DenseMatrix =  {
-    val dup = this.copy
-    dup.elementWiseOperateScalarInPlace(f,y)
+    dup.elementWiseOperateOnColumnsInPlace(f, y)
   }
 
-  def operate(f: (Double, Double) => Double, y: Matrix): DenseMatrix = {
+  private[mllib] def elementWiseOperateOnRows(f: (Double, Double) => Double, y: Matrix): DenseMatrix = {
     val dup = this.copy
-    dup.operateInPlace(f,y)
+    dup.elementWiseOperateOnRowsInPlace(f, y)
+  }
+
+  private[mllib] def elementWiseOperate(f: (Double, Double) => Double, y: Matrix): DenseMatrix =  {
+    val dup = this.copy
+    dup.elementWiseOperateInPlace(f, y)
+  }
+
+  private[mllib] def elementWiseOperateScalar(f: (Double, Double) => Double, y: Double): DenseMatrix =  {
+    val dup = this.copy
+    dup.elementWiseOperateScalarInPlace(f, y)
+  }
+
+  private[mllib] def operate(f: (Double, Double) => Double, y: Matrix): DenseMatrix = {
+    val dup = this.copy
+    dup.operateInPlace(f, y)
   }
 
   def map(f: Double => Double) = new DenseMatrix(numRows, numCols, values.map(f))
@@ -334,7 +386,7 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
     while (j < numCols){
       var i = 0
       while (i < numRows){
-        val idx = index(i,j)
+        val idx = index(i, j)
         sums.update(0,j, sums(j) + math.pow(values(idx),p))
         i += 1
       }
@@ -348,22 +400,7 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
     sums
   }
 
-  def signumInPlace: DenseMatrix = {
-    var j = 0
-    val len = values.length
-    while (j < len){
-      values(j) = if (values(j)<0.0) -1.0 else if(values(j)==0.0) 0.0 else 1.0
-      j += 1
-    }
-    this
-  }
-
-  def signum: DenseMatrix = {
-    val copy = new DenseMatrix(numRows, numCols, values.clone())
-    copy.signumInPlace
-  }
-
-  def negInPlace: DenseMatrix = {
+  private[mllib] def negInPlace: DenseMatrix = {
     var j = 0
     val len = values.length
     while (j < len){
@@ -373,12 +410,12 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
     this
   }
 
-  def neg: DenseMatrix = {
+  private[mllib] def neg: DenseMatrix = {
     val copy = new DenseMatrix(numRows, numCols, values.clone())
     copy.negInPlace
   }
 
-  def compareInPlace(v: Double, f: (Double, Double) => Boolean): DenseMatrix = {
+  private[mllib] def compareInPlace(v: Double, f: (Double, Double) => Boolean): DenseMatrix = {
     var j = 0
     val len = values.length
     while (j < len){
@@ -388,12 +425,12 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
     this
   }
 
-  def compare(v: Double, f: (Double, Double) => Boolean): DenseMatrix = {
+  private[mllib] def compare(v: Double, f: (Double, Double) => Boolean): DenseMatrix = {
     val copy = new DenseMatrix(numRows, numCols, values.clone())
     copy.compareInPlace(v, f)
   }
 
-  def timesInPlace(y: DenseMatrix): DenseMatrix = {
+  private[mllib] def timesInPlace(y: Matrix): DenseMatrix = {
     val copy = this times y
     BLAS.copy(Vectors.dense(copy.values), Vectors.dense(values))
     this
@@ -459,7 +496,7 @@ object DenseMatrix {
 
   /**
    * Generate a diagonal matrix in `DenseMatrix` format from the supplied values.
-   * @param vector a `Vector` tat will form the values on the diagonal of the matrix
+   * @param vector a `Vector` that will form the values on the diagonal of the matrix
    * @return Square `DenseMatrix` with size `values.length` x `values.length` and `values`
    *         on the diagonal
    */
@@ -535,6 +572,7 @@ class SparseMatrix(
   }
 
   private[mllib] def index(i: Int, j: Int): Int = {
+    if (colPtrs.last == 0) return -1 // Matrix full of zeros
     var regionStart = colPtrs(j)
     var regionEnd = colPtrs(j + 1)
     while (regionStart <= regionEnd) {
@@ -564,11 +602,11 @@ class SparseMatrix(
 
   override def copy = new SparseMatrix(numRows, numCols, colPtrs, rowIndices, values.clone())
 
-  def elementWiseOperateOnColumnsInPlace(f: (Double, Double) => Double, y: Matrix): Matrix = {
+  private[mllib] def elementWiseOperateOnColumnsInPlace(f: (Double, Double) => Double, y: Matrix): Matrix = {
     if (isMultiplication(f) || isDivision(f)) {
       val y_vals = y.toArray
       require(y_vals.length == numRows)
-      var j=0
+      var j = 0
       while (j < numCols){
         var i = colPtrs(j)
         val indEnd = colPtrs(j + 1)
@@ -584,11 +622,14 @@ class SparseMatrix(
       dup.elementWiseOperateOnColumnsInPlace(f, y)
     }
   }
-  def elementWiseOperateOnRowsInPlace(f: (Double, Double) => Double, y: Matrix): Matrix = {
+
+  private[mllib] def elementWiseOperateOnRowsInPlace(
+      f: (Double, Double) => Double,
+      y: Matrix): Matrix = {
     if (isMultiplication(f) || isDivision(f)) {
       val y_vals = y.toArray
       require(y_vals.length == numCols)
-      var j=0
+      var j = 0
       while (j < numCols){
         var i = colPtrs(j)
         val indEnd = colPtrs(j + 1)
@@ -604,11 +645,14 @@ class SparseMatrix(
       dup.elementWiseOperateOnRowsInPlace(f, y)
     }
   }
-  def elementWiseOperateInPlace(f: (Double, Double) => Double, y: Matrix): Matrix =  {
+
+  private[mllib] def elementWiseOperateInPlace(
+      f: (Double, Double) => Double,
+      y: Matrix): Matrix =  {
     require(y.numCols == numCols)
     require(y.numRows == numRows)
     if (isMultiplication(f) || isDivision(f)) {
-      var j=0
+      var j = 0
       while (j < numCols){
         var i = colPtrs(j)
         val indEnd = colPtrs(j + 1)
@@ -624,7 +668,10 @@ class SparseMatrix(
       dup.elementWiseOperateInPlace(f, y)
     }
   }
-  def elementWiseOperateScalarInPlace(f: (Double, Double) => Double, y: Double): Matrix =  {
+
+  private[mllib] def elementWiseOperateScalarInPlace(
+      f: (Double, Double) => Double,
+      y: Double): Matrix =  {
     if (isMultiplication(f) || isDivision(f)) {
       var j = 0
       val len = values.length
@@ -653,7 +700,7 @@ class SparseMatrix(
     true
   }
 
-  def operateInPlace(f: (Double, Double) => Double, y: Matrix): Matrix = {
+  private[mllib] def operateInPlace(f: (Double, Double) => Double, y: Matrix): Matrix = {
     if (y.numCols==1 || y.numRows == 1) {
       require(numCols != numRows, "Operation is ambiguous. Please use elementWiseMultiplyRows " +
         "or elementWiseMultiplyColumns instead")
@@ -671,28 +718,32 @@ class SparseMatrix(
     }
   }
 
-  def elementWiseOperateOnColumns(f: (Double, Double) => Double, y: Matrix): Matrix = {
+  private[mllib] def elementWiseOperateOnColumns(
+      f: (Double, Double) => Double,
+      y: Matrix): Matrix = {
     val dup = y match {
       case sy: SparseMatrix => this.copy
       case dy: DenseMatrix => this.toDense
     }
     dup.elementWiseOperateOnColumnsInPlace(f, y)
   }
-  def elementWiseOperateOnRows(f: (Double, Double) => Double, y: Matrix): Matrix = {
+  private[mllib] def elementWiseOperateOnRows(
+      f: (Double, Double) => Double,
+      y: Matrix): Matrix = {
     val dup = y match {
       case sy: SparseMatrix => this.copy
       case dy: DenseMatrix => this.toDense
     }
     dup.elementWiseOperateOnRowsInPlace(f, y)
   }
-  def elementWiseOperate(f: (Double, Double) => Double, y: Matrix): Matrix =  {
+  private[mllib] def elementWiseOperate(f: (Double, Double) => Double, y: Matrix): Matrix =  {
     val dup = y match {
       case sy: SparseMatrix => this.copy
       case dy: DenseMatrix => this.toDense
     }
     dup.elementWiseOperateInPlace(f, y)
   }
-  def elementWiseOperateScalar(f: (Double, Double) => Double, y: Double): Matrix =  {
+  private[mllib] def elementWiseOperateScalar(f: (Double, Double) => Double, y: Double): Matrix =  {
     if (isMultiplication(f) || isDivision(f)) {
       val dup = this.copy
       dup.elementWiseOperateScalarInPlace(f, y)
@@ -702,7 +753,7 @@ class SparseMatrix(
     }
   }
 
-  def operate(f: (Double, Double) => Double, y: Matrix): Matrix = {
+  private[mllib] def operate(f: (Double, Double) => Double, y: Matrix): Matrix = {
     val dup = y match {
       case sy: SparseMatrix => this.copy
       case dy: DenseMatrix => this.toDense
@@ -730,9 +781,8 @@ class SparseMatrix(
     while (j < numCols){
       var i = colPtrs(j)
       val indEnd = colPtrs(j + 1)
-      while (i < numRows){
-        val idx = index(i,j)
-        sums.values(j) += math.pow(values(idx),p)
+      while (i < indEnd){
+        sums.values(j) += math.pow(values(i),p)
         i += 1
       }
       j += 1
@@ -741,22 +791,7 @@ class SparseMatrix(
     sums
   }
 
-  def signumInPlace: SparseMatrix = {
-    var j = 0
-    val len = values.length
-    while (j < len){
-      values(j) = if (values(j)<0.0) -1.0 else if(values(j)==0.0) 0.0 else 1.0
-      j += 1
-    }
-    this
-  }
-
-  def signum: SparseMatrix = {
-    val copy = this.copy
-    copy.signumInPlace
-  }
-
-  def negInPlace: SparseMatrix = {
+  private[mllib] def negInPlace: SparseMatrix = {
     var j = 0
     val len = values.length
     while (j < len){
@@ -766,17 +801,168 @@ class SparseMatrix(
     this
   }
 
-  def neg: SparseMatrix = {
+  private[mllib] def neg: SparseMatrix = {
     val copy = this.copy
     copy.negInPlace
   }
 
-  def compare(v: Double, f: (Double, Double) => Boolean): DenseMatrix = {
+  private[mllib] def compare(v: Double, f: (Double, Double) => Boolean): DenseMatrix = {
     val copy = new DenseMatrix(numRows, numCols, this.toArray)
     copy.compareInPlace(v, f)
   }
 
   def toDense: DenseMatrix = new DenseMatrix(numRows, numCols, this.toArray)
+}
+
+object SparseMatrix {
+
+  /**
+   * Generate an Identity Matrix in `SparseMatrix` format.
+   * @param n number of rows and columns of the matrix
+   * @return `SparseMatrix` with size `n` x `n` and values of ones on the diagonal
+   */
+  def speye(n: Int): SparseMatrix = {
+    new SparseMatrix(n, n, (0 to n).toArray, (0 until n).toArray, Array.fill(n)(1.0))
+  }
+
+  private def genRand(numRows: Int, numCols: Int, raw: Array[Double], nonZero: Int): SparseMatrix = {
+    val sparseA: ArrayBuffer[Double] = new ArrayBuffer(nonZero)
+
+    val sCols: ArrayBuffer[Int] = new ArrayBuffer(numCols + 1)
+    val sRows: ArrayBuffer[Int] = new ArrayBuffer(nonZero)
+
+    var i = 0
+    var nnz = 0
+    var lastCol = -1
+
+    raw.foreach { v =>
+      val r = i % numRows
+      val c = (i - r) / numRows
+      if ( v != 0.0) {
+        sRows.append(r)
+        sparseA.append(v)
+        while (c != lastCol){
+          sCols.append(nnz)
+          lastCol += 1
+        }
+        nnz += 1
+      }
+      i += 1
+    }
+    sCols.append(sparseA.length)
+    new SparseMatrix(numRows, numCols, sCols.toArray, sRows.toArray, sparseA.toArray)
+  }
+
+  /**
+   * Generate a `SparseMatrix` consisting of i.i.d. uniform random numbers.
+   * @param numRows number of rows of the matrix
+   * @param numCols number of columns of the matrix
+   * @param density the desired density for the matrix
+   * @param seed the seed for the random generator
+   * @return `SparseMatrix` with size `numRows` x `numCols` and values in U(0, 1)
+   */
+  def sprand(
+      numRows: Int,
+      numCols: Int,
+      density: Double,
+      seed: Long = Utils.random.nextLong()): SparseMatrix = {
+
+    require(density > 0.0 && density < 1.0, "density must be a double in the range " +
+      s"0.0 < d < 1.0. Currently, density: $density")
+    val rand = new XORShiftRandom(seed)
+    val length = numRows * numCols
+    val rawA = Array.fill(length)(0.0)
+    var nnz = 0
+    for (i <- 0 until length) {
+      val p = rand.nextDouble()
+      if (p < density) {
+        rawA.update(i, rand.nextDouble())
+        nnz += 1
+      }
+    }
+    genRand(numRows, numCols, rawA, nnz)
+  }
+
+  /**
+   * Generate a `SparseMatrix` consisting of i.i.d. gaussian random numbers.
+   * @param numRows number of rows of the matrix
+   * @param numCols number of columns of the matrix
+   * @param density the desired density for the matrix
+   * @param seed the seed for the random generator
+   * @return `SparseMatrix` with size `numRows` x `numCols` and values in N(0, 1)
+   */
+  def sprandn(
+      numRows: Int,
+      numCols: Int,
+      density: Double,
+      seed: Long = Utils.random.nextLong()): SparseMatrix = {
+
+    require(density > 0.0 && density < 1.0, "density must be a double in the range " +
+      s"0.0 < d < 1.0. Currently, density: $density")
+    val rand = new XORShiftRandom(seed)
+    val length = numRows * numCols
+    val rawA = Array.fill(length)(0.0)
+    var nnz = 0
+    for (i <- 0 until length) {
+      val p = rand.nextDouble()
+      if (p < density) {
+        rawA.update(i, rand.nextGaussian())
+        nnz += 1
+      }
+    }
+    genRand(numRows, numCols, rawA, nnz)
+  }
+
+  /**
+   * Generate a diagonal matrix in `DenseMatrix` format from the supplied values.
+   * @param vector a `Vector` that will form the values on the diagonal of the matrix
+   * @return Square `SparseMatrix` with size `values.length` x `values.length` and non-zero `values`
+   *         on the diagonal
+   */
+  def diag(vector: Vector): SparseMatrix = {
+    val n = vector.size
+    vector match {
+      case sVec: SparseVector =>
+        val rows = sVec.indices
+        val values = sVec.values
+        var i = 0
+        var lastCol = -1
+        val colPtrs = new ArrayBuffer[Int](n)
+        rows.foreach { r =>
+          while (r != lastCol) {
+            colPtrs.append(i)
+            lastCol += 1
+          }
+          i += 1
+        }
+        colPtrs.append(n)
+        new SparseMatrix(n, n, colPtrs.toArray, rows, values)
+      case dVec: DenseVector =>
+        val values = dVec.values
+        var i = 0
+        var nnz = 0
+        val sVals = values.filter( v => v != 0.0)
+        var lastCol = -1
+        val colPtrs = new ArrayBuffer[Int](n + 1)
+        val sRows = new ArrayBuffer[Int](sVals.length)
+        values.foreach { v =>
+          if (v != 0.0) {
+            sRows.append(i)
+            while (lastCol != i) {
+              colPtrs.append(nnz)
+              lastCol += 1
+            }
+            nnz += 1
+          }
+          i += 1
+        }
+        while (lastCol != i) {
+          colPtrs.append(nnz)
+          lastCol += 1
+        }
+        new SparseMatrix(n, n, colPtrs.toArray, sRows.toArray, sVals)
+    }
+  }
 }
 
 /**
@@ -856,6 +1042,13 @@ object Matrices {
   def eye(n: Int): Matrix = DenseMatrix.eye(n)
 
   /**
+   * Generate an Identity Matrix in `SparseMatrix` format.
+   * @param n number of rows and columns of the matrix
+   * @return `SparseMatrix` with size `n` x `n` and values of ones on the diagonal
+   */
+  def speye(n: Int): Matrix = SparseMatrix.speye(n)
+
+  /**
    * Generate a `DenseMatrix` consisting of i.i.d. uniform random numbers.
    * @param numRows number of rows of the matrix
    * @param numCols number of columns of the matrix
@@ -872,8 +1065,40 @@ object Matrices {
   def randn(numRows: Int, numCols: Int): Matrix = DenseMatrix.randn(numRows, numCols)
 
   /**
-   * Generate a diagonal matrix in `DenseMatrix` format from the supplied values.
-   * @param vector a `Vector` tat will form the values on the diagonal of the matrix
+   * Generate a `SparseMatrix` consisting of i.i.d. gaussian random numbers.
+   * @param numRows number of rows of the matrix
+   * @param numCols number of columns of the matrix
+   * @param density the desired density for the matrix
+   * @param seed the seed for the random generator
+   * @return `Matrix` with size `numRows` x `numCols` and values in U(0, 1)
+   */
+  def sprand(
+      numRows: Int,
+      numCols: Int,
+      density: Double,
+      seed: Long = Utils.random.nextLong()): Matrix =
+    SparseMatrix.sprand(numRows, numCols, density, seed)
+
+  /**
+   * Generate a `SparseMatrix` consisting of i.i.d. gaussian random numbers.
+   * @param numRows number of rows of the matrix
+   * @param numCols number of columns of the matrix
+   * @param density the desired density for the matrix
+   * @param seed the seed for the random generator
+   * @return `Matrix` with size `numRows` x `numCols` and values in N(0, 1)
+   */
+  def sprandn(
+      numRows: Int,
+      numCols: Int,
+      density: Double,
+      seed: Long = Utils.random.nextLong()): Matrix =
+    SparseMatrix.sprandn(numRows, numCols, density, seed)
+
+  /**
+   * Generate a diagonal matrix in `DenseMatrix` format from the supplied values. Use
+   * [[org.apache.spark.mllib.linalg.SparseMatrix.diag()]] in order to generate the matrix in
+   * `SparseMatrix` format.
+   * @param vector a `Vector` that will form the values on the diagonal of the matrix
    * @return Square `DenseMatrix` with size `values.length` x `values.length` and `values`
    *         on the diagonal
    */
@@ -922,76 +1147,182 @@ object Matrices {
           matrices.flatMap(_.asInstanceOf[SparseMatrix].values).toArray)
     }
   }
-
-  private[mllib] def fromRDD( rows: RDD[(Double, Vector)],
-               batchSize : Int = 8,
-               generateOnTheFly: Boolean = true)
-  : RDD[(DenseMatrix, Matrix)] = {
+  // partitionMetaData correspond to the index of the partition and the max number of non-zeros
+  // in that partition so that we can preallocate a memory efficient buffer
+  private[mllib] def fromRDD(
+      rows: RDD[(Double, Vector)],
+      partitionMetaData: Array[(Int, Int)],
+      buildSparseThreshold: Double = 0.2,
+      batchSize : Int = 8,
+      generateOnTheFly: Boolean = true): RDD[(DenseMatrix, Matrix)] = {
 
     if (!generateOnTheFly){
-      rows.mapPartitions{iter =>
+      rows.mapPartitions { iter =>
         iter.grouped(batchSize)
       }.map(fromSeq(_, batchSize))
-
     }else {
       val numFeatures = rows.first()._2.size
-      rows.mapPartitions{iter =>
-        val matrixBuffer = (DenseMatrix.zeros(batchSize,1),
-          DenseMatrix.zeros(batchSize, numFeatures))
 
-        iter.grouped(batchSize).map(fromSeqIntoBuffer(_, matrixBuffer, batchSize))
+      rows.mapPartitionsWithIndex{ case (ind, iter) =>
+        val findPartition = partitionMetaData.find(_._1 == ind)
+        val matrixBuffer =
+          if (findPartition.get._2 != -1) {
+            val nnz = findPartition.get._2
+            val density = nnz * 1.0 / (numFeatures * batchSize)
+            if (density <= buildSparseThreshold) {
+              (DenseMatrix.zeros(batchSize, 1), new SparseMatrix(batchSize, numFeatures,
+                Array.fill(numFeatures + 1)(0), Array.fill(nnz)(0), Array.fill(nnz)(0.0)))
+            } else {
+              (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(batchSize, numFeatures))
+            }
+          } else {
+            (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(batchSize, numFeatures))
+          }
+        iter.grouped(batchSize).map(fromSeqIntoBuffer(_, matrixBuffer, batchSize)._2)
       }
     }
+  }
 
+  // Collects data on the maximum number of non-zero elements in a partition for each
+  // batch of matrices
+  private[mllib] def getSparsityData(
+      rows: RDD[(Double, Vector)],
+      batchSize : Int = 64): Array[(Int, Int)] = {
+    val numFeatures = rows.first()._2.size
+
+    val partitionMetaData = rows.mapPartitionsWithIndex { case (ind, iter) =>
+
+      val matrixBuffer =
+        (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(batchSize, numFeatures))
+      var partitionMaxNNZ = -1
+      iter.grouped(batchSize).foreach { rows =>
+        val (metaData, _) = fromSeqIntoBuffer(rows, matrixBuffer, batchSize)
+        val maxNNZ =
+          if (metaData > partitionMaxNNZ) metaData else partitionMaxNNZ
+
+        partitionMaxNNZ = maxNNZ
+      }
+      Iterator((ind, partitionMaxNNZ))
+    }
+    partitionMetaData.collect()
   }
 
   private def fromSeq(rows: Seq[(Double, Vector)], batchSize: Int) : (DenseMatrix, Matrix) = {
     val numExamples = rows.length
     val numFeatures = rows(0)._2.size
-    val matrixBuffer = new Array[Double](numExamples*numFeatures)
-    val labelBuffer = new Array[Double](numExamples)
-    flattenMatrix(rows, matrixBuffer, labelBuffer,batchSize)
+    val matrixBuffer = DenseMatrix.zeros(numExamples, numFeatures)
+    val labelBuffer = DenseMatrix.zeros(numExamples, 1)
+    flattenMatrix(rows, matrixBuffer, labelBuffer, batchSize)
 
-    (new DenseMatrix(numExamples,1,labelBuffer),
-      new DenseMatrix(numExamples,numFeatures, matrixBuffer))
+    (matrixBuffer, labelBuffer)
   }
 
   private def fromSeqIntoBuffer(
       rows: Seq[(Double, Vector)],
-      buffer: (DenseMatrix, Matrix), batchSize: Int) : (DenseMatrix, Matrix) = {
-    val labelBuffer = buffer._1.toArray
-    val matrixBuffer = buffer._2.toArray
-    flattenMatrix(rows, matrixBuffer, labelBuffer, batchSize)
+      buffer: (DenseMatrix, Matrix),
+      batchSize: Int) : (Int, (DenseMatrix, Matrix)) = {
+    val labelBuffer = buffer._1
+    val matrixBuffer = buffer._2
+    val metadata = flattenMatrix(rows, matrixBuffer, labelBuffer, batchSize)
 
-    //println(s"\n\nMatrix:\n$buffer")
-    buffer
+    println(s"\n\nMatrix:\n$buffer")
+    (metadata, buffer)
   }
 
   private def flattenMatrix(
       vals: Seq[(Double, Vector)],
-      matrixInto: Array[Double],
-      labelsInto: Array[Double],
-      batchSize: Int) {
+      matrixInto: Matrix,
+      labelsInto: DenseMatrix,
+      batchSize: Int): Int = {
     val numExamples = vals.length
     val numFeatures = vals(0)._2.size
-    var i=0
-    for (r <- vals){
-      var j=0
-      labelsInto(i) = r._1
-      for (v <- r._2.toArray){
-        matrixInto(i + batchSize * j) = v
-        j +=1
-      }
-      i += 1
-    }
-    // clear existing values if we can not fill up the matrix
-    if (numExamples != batchSize) {
-      for (j <- 0 until numFeatures){
-        for (i <- numExamples until batchSize){
-          matrixInto(i + batchSize * j) = 0.0
+    var i = 0
+    var nnz = 0
+    matrixInto match {
+      case intoSparse: SparseMatrix =>
+        val entries = new PriorityQueue[LocalMatrixEntry]()(MatrixEntryOrdering)
+        for (r <- vals) {
+          labelsInto.values(i) = r._1
+          r._2 match {
+            case sVec: SparseVector =>
+              val len = sVec.indices.length
+              var j = 0
+              while (j < len) {
+                entries += new LocalMatrixEntry(i, sVec.indices(j), sVec.values(j))
+                nnz += 1
+                j += 1
+              }
+            case dVec: DenseVector =>
+              var j = 0
+              while (j < numFeatures) {
+                val value = dVec.values(j)
+                if (value != 0.0) {
+                  entries += new LocalMatrixEntry(i, j, value)
+                  nnz += 1
+                }
+                j += 1
+              }
+          }
+          i += 1
+        }
+        var lastCol = -1
+        var entryCount = 0
+        while (entries.nonEmpty) {
+          val entry = entries.dequeue()
+          intoSparse.rowIndices(entryCount) = entry.i
+          intoSparse.values(entryCount) = entry.value
+          while (lastCol != entry.j) {
+            lastCol += 1
+            intoSparse.colPtrs(lastCol) = entryCount
+          }
+          entryCount += 1
+        }
+        assert(entryCount == nnz)
+        // clear existing values if we can not fill up the matrix. Enough to keep colPtrs constant.
+        while (lastCol != numFeatures) {
+          lastCol += 1
+          intoSparse.colPtrs(lastCol) = entryCount
+        }
+      case intoDense: DenseMatrix =>
+        for (r <- vals) {
+          labelsInto.values(i) = r._1
+          r._2 match {
+            case sVec: SparseVector =>
+              val len = sVec.indices.length
+              var j = 0
+              while (j < len) {
+                intoDense.values(i + batchSize * sVec.indices(j)) = sVec.values(j)
+                nnz += 1
+                j += 1
+              }
+            case dVec: DenseVector =>
+              var j = 0
+              while (j < numFeatures) {
+                val value = dVec.values(j)
+                if (value != 0.0) nnz += 1
+                intoDense.values(i + batchSize * j) = value
+                j += 1
+              }
+          }
+          i += 1
+        }
+        // clear existing values if we can not fill up the matrix
+        if (numExamples != batchSize) {
+          for (j <- 0 until numFeatures) {
+            for (i <- numExamples until batchSize) {
+              intoDense.values(i + batchSize * j) = 0.0
+            }
+          }
         }
       }
+    nnz
+  }
+  private case class LocalMatrixEntry(i: Int, j: Int, value: Double)
 
+  private object MatrixEntryOrdering extends Ordering[LocalMatrixEntry] {
+    def compare(a:LocalMatrixEntry, b:LocalMatrixEntry) = {
+      val colOrdering = b.j compare a.j
+      if (colOrdering == 0) b.i compare a.i else colOrdering
     }
   }
 }

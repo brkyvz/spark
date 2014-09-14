@@ -225,14 +225,26 @@ private[mllib] object BLAS extends Serializable {
       transB: Boolean,
       alpha: Double,
       A: Matrix,
-      B: DenseMatrix,
+      B: Matrix,
       beta: Double,
       C: DenseMatrix): Unit = {
     A match {
       case sparse: SparseMatrix =>
-        gemm(transA, transB, alpha, sparse, B, beta, C)
+        B match {
+          case dB: DenseMatrix => gemm(transA, transB, alpha, sparse, dB, beta, C)
+          case sB: SparseMatrix =>
+            throw new IllegalArgumentException(s"gemm doesn't support sparse-sparse matrix " +
+              s"multiplication")
+          case _ =>
+            throw new IllegalArgumentException(s"gemm doesn't support matrix type ${B.getClass}.")
+        }
       case dense: DenseMatrix =>
-        gemm(transA, transB, alpha, dense, B, beta, C)
+        B match {
+          case dB: DenseMatrix => gemm(transA, transB, alpha, dense, dB, beta, C)
+          case sB: SparseMatrix => gemm(transA, transB, alpha, dense, sB, beta, C)
+          case _ =>
+            throw new IllegalArgumentException(s"gemm doesn't support matrix type ${B.getClass}.")
+        }
       case _ =>
         throw new IllegalArgumentException(s"gemm doesn't support matrix type ${A.getClass}.")
     }
@@ -250,7 +262,7 @@ private[mllib] object BLAS extends Serializable {
   def gemm(
       alpha: Double,
       A: Matrix,
-      B: DenseMatrix,
+      B: Matrix,
       beta: Double,
       C: DenseMatrix): Unit = {
     gemm(false, false, alpha, A, B, beta, C)
@@ -327,7 +339,7 @@ private[mllib] object BLAS extends Serializable {
               i += 1
             }
             val Cindex = Cstart + rowCounterForA
-            C.values(Cindex) = beta * C.values(Cindex) + sum
+            C.values(Cindex) = beta * C.values(Cindex) + sum * alpha
             rowCounterForA += 1
           }
           colCounterForB += 1
@@ -345,7 +357,7 @@ private[mllib] object BLAS extends Serializable {
               i += 1
             }
             val Cindex = Cstart + rowCounter
-            C.values(Cindex) = beta * C.values(Cindex) + sum
+            C.values(Cindex) = beta * C.values(Cindex) + sum * alpha
             rowCounter += 1
           }
           colCounterForB += 1
@@ -368,7 +380,7 @@ private[mllib] object BLAS extends Serializable {
             val Bval = B(colCounterForA, colCounterForB)
             val Cstart = colCounterForB * mA
             while (i < indEnd){
-              C.values(Cstart + Arows(i)) += Avals(i) * Bval
+              C.values(Cstart + Arows(i)) += Avals(i) * Bval * alpha
               i += 1
             }
             colCounterForA += 1
@@ -384,12 +396,124 @@ private[mllib] object BLAS extends Serializable {
             val Bval = B(colCounterForB, colCounterForA)
             val Cstart = colCounterForB * mA
             while (i < indEnd){
-              C.values(Cstart + Arows(i)) += Avals(i) * Bval
+              C.values(Cstart + Arows(i)) += Avals(i) * Bval * alpha
               i += 1
             }
             colCounterForA += 1
           }
           colCounterForB += 1
+        }
+      }
+    }
+  }
+
+  /**
+   * C := alpha * A * B + beta * C
+   * For `DenseMatrix` A and `SparseMatrix` B.
+   */
+  private def gemm(
+      transA: Boolean,
+      transB: Boolean,
+      alpha: Double,
+      A: DenseMatrix,
+      B: SparseMatrix,
+      beta: Double,
+      C: DenseMatrix): Unit = {
+    val mA: Int = if (!transA) A.numRows else A.numCols
+    val nB: Int = if (!transB) B.numCols else B.numRows
+    val kA: Int = if (!transA) A.numCols else A.numRows
+    val kB: Int = if (!transB) B.numRows else B.numCols
+
+    require(kA == kB, s"The columns of A don't match the rows of B. A: $kA, B: $kB")
+    require(mA == C.numRows, s"The rows of C don't match the rows of A. C: ${C.numRows}, A: $mA")
+    require(nB == C.numCols,
+      s"The columns of C don't match the columns of B. C: ${C.numCols}, A: $nB")
+
+    val Bvals = B.values
+    val Brows = if (!transB) B.rowIndices else B.colPtrs
+    val Bcols = if (!transB) B.colPtrs else B.rowIndices
+
+    if (transA){
+      var colCounterForB = 0
+      if (!transB){ // Expensive to put the check inside the loop
+        while (colCounterForB < nB) {
+          var rowCounterForA = 0
+          val Cstart = colCounterForB * mA
+          val indEnd = Bcols(colCounterForB + 1)
+          while (rowCounterForA < mA) {
+            var i = Bcols(colCounterForB)
+            val Astart = rowCounterForA * kA
+            var sum = 0.0
+            while (i < indEnd) {
+              sum += Bvals(i) * A.values(Astart + Brows(i))
+              i += 1
+            }
+            val Cindex = Cstart + rowCounterForA
+            C.values(Cindex) = beta * C.values(Cindex) + sum * alpha
+            rowCounterForA += 1
+          }
+          colCounterForB += 1
+        }
+      } else {
+        var rowCounterForA = 0
+        while (rowCounterForA < mA) {
+          var colCounterForA = 0
+          val Astart = rowCounterForA * kA
+          while (colCounterForA < kA) {
+            var i = Brows(colCounterForA)
+            val indEnd = Brows(colCounterForA + 1)
+            while (i < indEnd){
+              val Cindex = Bcols(i) * mA + rowCounterForA
+              C.values(Cindex) += A.values(Astart + colCounterForA) * Bvals(i) * alpha
+              i += 1
+            }
+            colCounterForA += 1
+          }
+          rowCounterForA += 1
+        }
+      }
+    } else {
+      // Scale matrix first if `beta` is not equal to 0.0
+      if (beta != 0.0){
+        nativeBLAS.dscal(C.values.length, beta, C.values, 1)
+      }
+      if (!transB) { // Expensive to put the check inside the loop
+
+        // Loop over the columns of B, pick non-zero row in B, select corresponding column in A,
+        // and update the whole column in C by looping over rows in A.
+        var colCounterForB = 0 // the column to be updated in C
+        while (colCounterForB < nB) {
+          var i = Bcols(colCounterForB)
+          val indEnd = Bcols(colCounterForB + 1)
+          while (i < indEnd) {
+            var rowCounterForA = 0
+            val Bval = Bvals(i)
+            val Cstart = colCounterForB * mA
+            val Astart = mA * Brows(i)
+            while (rowCounterForA < mA){
+              C.values(Cstart + rowCounterForA) += A.values(Astart + rowCounterForA) * Bval * alpha
+              rowCounterForA += 1
+            }
+            i += 1
+          }
+          colCounterForB += 1
+        }
+      } else {
+        var colCounterForA = 0
+        while (colCounterForA < kA) {
+          var rowCounterForA = 0
+          val Astart = mA * colCounterForA
+          val indEnd = Brows(colCounterForA + 1)
+          while (rowCounterForA < mA) {
+            var i = Brows(colCounterForA)
+            while (i < indEnd){
+              val Cindex = Bcols(i) * mA + rowCounterForA
+              C.values(Cindex) += A.values(Astart + rowCounterForA) * Bvals(i) * alpha
+              i += 1
+            }
+            rowCounterForA += 1
+          }
+          colCounterForA += 1
         }
       }
     }
