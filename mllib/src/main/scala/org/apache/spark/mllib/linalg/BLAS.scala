@@ -20,10 +20,12 @@ package org.apache.spark.mllib.linalg
 import com.github.fommil.netlib.{BLAS => NetlibBLAS, F2jBLAS}
 import com.github.fommil.netlib.BLAS.{getInstance => NativeBLAS}
 
+import org.apache.spark.Logging
+
 /**
  * BLAS routines for MLlib's vectors and matrices.
  */
-private[mllib] object BLAS extends Serializable {
+private[mllib] object BLAS extends Serializable with Logging {
 
   @transient private var _f2jBLAS: NetlibBLAS = _
   @transient private var _nativeBLAS: NetlibBLAS = _
@@ -228,25 +230,29 @@ private[mllib] object BLAS extends Serializable {
       B: Matrix,
       beta: Double,
       C: DenseMatrix): Unit = {
-    A match {
-      case sparse: SparseMatrix =>
-        B match {
-          case dB: DenseMatrix => gemm(transA, transB, alpha, sparse, dB, beta, C)
-          case sB: SparseMatrix =>
-            throw new IllegalArgumentException(s"gemm doesn't support sparse-sparse matrix " +
-              s"multiplication")
-          case _ =>
-            throw new IllegalArgumentException(s"gemm doesn't support matrix type ${B.getClass}.")
-        }
-      case dense: DenseMatrix =>
-        B match {
-          case dB: DenseMatrix => gemm(transA, transB, alpha, dense, dB, beta, C)
-          case sB: SparseMatrix => gemm(transA, transB, alpha, dense, sB, beta, C)
-          case _ =>
-            throw new IllegalArgumentException(s"gemm doesn't support matrix type ${B.getClass}.")
-        }
-      case _ =>
-        throw new IllegalArgumentException(s"gemm doesn't support matrix type ${A.getClass}.")
+    if (alpha == 0.0) {
+      logWarning("gemm: alpha is equal to 0. Returning C.")
+    } else {
+      A match {
+        case sparse: SparseMatrix =>
+          B match {
+            case dB: DenseMatrix => gemm(transA, transB, alpha, sparse, dB, beta, C)
+            case sB: SparseMatrix =>
+              throw new IllegalArgumentException(s"gemm doesn't support sparse-sparse matrix " +
+                s"multiplication")
+            case _ =>
+              throw new IllegalArgumentException(s"gemm doesn't support matrix type ${B.getClass}.")
+          }
+        case dense: DenseMatrix =>
+          B match {
+            case dB: DenseMatrix => gemm(transA, transB, alpha, dense, dB, beta, C)
+            case sB: SparseMatrix => gemm(transA, transB, alpha, dense, sB, beta, C)
+            case _ =>
+              throw new IllegalArgumentException(s"gemm doesn't support matrix type ${B.getClass}.")
+          }
+        case _ =>
+          throw new IllegalArgumentException(s"gemm doesn't support matrix type ${A.getClass}.")
+      }
     }
   }
 
@@ -544,14 +550,17 @@ private[mllib] object BLAS extends Serializable {
     require(nA == nx, s"The columns of A don't match the number of elements of x. A: $nA, x: $nx")
     require(mA == y.size,
       s"The rows of A don't match the number of elements of y. A: $mA, y:${y.size}}")
-
-    A match {
-      case sparse: SparseMatrix =>
-        gemv(trans, alpha, sparse, x, beta, y)
-      case dense: DenseMatrix =>
-        gemv(trans, alpha, dense, x, beta, y)
-      case _ =>
-        throw new IllegalArgumentException(s"gemv doesn't support matrix type ${A.getClass}.")
+    if (alpha == 0.0) {
+      logWarning("gemv: alpha is equal to 0. Returning y.")
+    } else {
+      A match {
+        case sparse: SparseMatrix =>
+          gemv(trans, alpha, sparse, x, beta, y)
+        case dense: DenseMatrix =>
+          gemv(trans, alpha, dense, x, beta, y)
+        case _ =>
+          throw new IllegalArgumentException(s"gemv doesn't support matrix type ${A.getClass}.")
+      }
     }
   }
 
@@ -659,7 +668,7 @@ private[mllib] object BLAS extends Serializable {
           sum += Avals(i) * x.values(Acols(i))
           i += 1
         }
-        y.values(rowCounter) =  beta * y.values(rowCounter) + sum
+        y.values(rowCounter) =  beta * y.values(rowCounter) + sum * alpha
         rowCounter += 1
       }
     } else {
@@ -673,7 +682,7 @@ private[mllib] object BLAS extends Serializable {
         var i = Acols(colCounterForA)
         while (i < Acols(colCounterForA + 1)){
           val rowIndex = Arows(i)
-          y.values(rowIndex) += Avals(i) * x.values(colCounterForA)
+          y.values(rowIndex) += Avals(i) * x.values(colCounterForA) * alpha
           i += 1
         }
         colCounterForA += 1
