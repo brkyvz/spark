@@ -71,7 +71,6 @@ object MultiModelGradientDescentSuite {
 }
 
 class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext with Matchers {
-  /*
   test("Assert the loss is decreasing.") {
     val nPoints = 10000
     val A = 2.0
@@ -149,7 +148,7 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
   }
 
   test("Check for correctness: LogisticRegression-(SimpleUpdater+SquaredL2Updater)") {
-    val nPoints = 1000
+    val nPoints = 100
     val A = 2.0
     val B = -1.5
 
@@ -160,7 +159,7 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     val updater: Array[MultiModelUpdater] =
       Array(new MultiModelSimpleUpdater(), new MultiModelSquaredL2Updater())
     val stepSize = Array(1.0, 0.1)
-    val numIterations = Array(100)
+    val numIterations = Array(10)
     val regParam = Array(0.0, 0.1, 1.0)
     val miniBatchFrac = 1.0
 
@@ -219,11 +218,10 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
 
     assert(lastFromGD ~== mmLoss.last absTol 1e-10)
   }
-  */
 
   // Test if we can correctly learn Y = 10*X1 + 10*X10000
-  test("sparse linear regression without intercept") {
-    val nPoints = 10
+  test("use sparse matrices instead of dense") {
+    val nPoints = 100
 
     val denseRDD = sc.parallelize(
       LinearDataGenerator.generateLinearInput(0.0, Array(10.0, 10.0), nPoints, 42), 2)
@@ -233,9 +231,9 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     }.cache()
     val gradient = new MultiModelLeastSquaresGradient()
     val updater: Array[MultiModelUpdater] = Array(new MultiModelSquaredL2Updater())
-    val stepSize = Array(1.0) //, 0.1)
-    val numIterations = Array(1)
-    val regParam = Array(0.0) //, 0.1, 1.0)
+    val stepSize = Array(1.0, 0.1)
+    val numIterations = Array(10)
+    val regParam = Array(0.0, 0.1, 1.0)
     val miniBatchFrac = 1.0
     val initialWeights = Array.fill(10000)(0.0)
     // Add a extra variable consisting of all 1.0's for the intercept.
@@ -275,8 +273,7 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     assert(lastFromGD ~== mmLoss.last absTol 1e-10)
   }
 
-  /*
-  test("Check for correctness: LeastSquaresRegression-SquaredL2Updater") {
+  test("Check for correctness: LeastSquaresRegression-SquaredL2Updater)") {
     val nPoints = 100
     val numFeatures = 5
 
@@ -332,7 +329,7 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     assert(lastFromGD ~== mmLoss.last absTol 1e-10)
   }
 
-  test("Check for correctness: SVM-(L1Updater+SquaredL2Updater") {
+  test("Check for correctness: SVM-(L1Updater+SquaredL2Updater)") {
     val nPoints = 100
 
     val initialWeights = Array(1.0, 0.0, 0.0)
@@ -405,9 +402,8 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
 
     assert(lastFromGD ~== mmLoss.last absTol 1e-10)
   }
-  */
 }
-/*
+
 class MultiModelGradientDescentClusterSuite extends FunSuite with LocalClusterSparkContext {
 
   test("task size should be small") {
@@ -427,7 +423,7 @@ class MultiModelGradientDescentClusterSuite extends FunSuite with LocalClusterSp
       Array(2),
       Array(1.0),
       1.0,
-      Vectors.dense(new Array[Double](n)))
+      Vectors.dense(new Array[Double](n)),
+      useSparse = true)
   }
 }
-*/

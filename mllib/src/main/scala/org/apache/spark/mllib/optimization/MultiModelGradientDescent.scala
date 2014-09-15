@@ -151,7 +151,10 @@ object MultiModelGradientDescent extends Logging {
       numIterations: Array[Int],
       regParam: Array[Double],
       miniBatchFraction: Double,
-      initialWeights: Vector): (Matrix, Array[Vector]) = {
+      initialWeights: Vector,
+      batchSize: Int = 64,
+      useSparse: Boolean = true,
+      buildSparseThreshold: Double = 0.2): (Matrix, Array[Vector]) = {
 
     val maxNumIter = numIterations.max
     val stochasticLossHistory = new ArrayBuffer[Vector](maxNumIter)
@@ -176,7 +179,6 @@ object MultiModelGradientDescent extends Logging {
       return (Matrices.horzCat(weights), stochasticLossHistory.toArray)
 
     }
-
     val stepSizeMatrix = new DenseMatrix(1, numModels,
       stepSize.flatMap{ ss =>
         for (i <- 1 to regParam.length) yield ss
@@ -185,8 +187,17 @@ object MultiModelGradientDescent extends Logging {
     val regMatrix = SparseMatrix.diag(Vectors.dense(stepSize.flatMap{ ss =>
       for (reg <- regParam) yield reg
     }))
-    val bcMetaData = data.context.broadcast(Matrices.getSparsityData(data))
-    val points = Matrices.fromRDD(data, bcMetaData.value)
+
+    val bcMetaData =
+      if (useSparse) {
+        data.context.broadcast(Matrices.getSparsityData(data))
+      } else {
+        val emptyData: Array[(Int, Int)] = (0 until data.partitions.length).map { i =>
+          (i, -1)}.toArray
+        data.context.broadcast(emptyData)
+      }
+    val points = Matrices.fromRDD(data, bcMetaData.value, batchSize, buildSparseThreshold)
+
     /**
      * For the first iteration, the regVal will be initialized as sum of weight squares
      * if it's L2 updater; for L1 updater, the same logic is followed.
@@ -217,7 +228,6 @@ object MultiModelGradientDescent extends Logging {
             (grad1.zip(grad2).map(r => r._1.elementWiseOperateInPlace(_ + _, r._2)),
               loss1.zip(loss2).map(r => r._1.elementWiseOperateInPlace(_ + _, r._2)))
           })
-
       stochasticLossHistory.append(Vectors.dense(Matrices.horzCat(updaterCounter.map { i =>
         lossSum(i).elementWiseOperateScalarInPlace(_ / _, miniBatchSize).
         elementWiseOperateOnRowsInPlace(_ + _, regVal(i))

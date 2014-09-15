@@ -18,7 +18,6 @@
 package org.apache.spark.mllib.linalg
 
 import breeze.linalg.{Matrix => BM, DenseMatrix => BDM, CSCMatrix => BSM}
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.random.XORShiftRandom
 import org.apache.spark.util.Utils
@@ -244,7 +243,7 @@ trait Matrix extends Serializable {
  * @param numCols number of columns
  * @param values matrix entries in column major
  */
-class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double]) extends Matrix {
+class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double]) extends Matrix with Serializable {
 
   require(values.length == numRows * numCols, "The number of values supplied doesn't match the " +
     s"size of the matrix! values.length: ${values.length}, numRows * numCols: ${numRows * numCols}")
@@ -536,7 +535,7 @@ class SparseMatrix(
     val numCols: Int,
     val colPtrs: Array[Int],
     val rowIndices: Array[Int],
-    val values: Array[Double]) extends Matrix {
+    val values: Array[Double]) extends Matrix with Serializable {
 
   require(values.length == rowIndices.length, "The number of row indices and values don't match! " +
     s"values.length: ${values.length}, rowIndices.length: ${rowIndices.length}")
@@ -1022,7 +1021,7 @@ object Matrices {
    * Generate a `DenseMatrix` consisting of zeros.
    * @param numRows number of rows of the matrix
    * @param numCols number of columns of the matrix
-   * @return `DenseMatrix` with size `numRows` x `numCols` and values of zeros
+   * @return `Matrix` with size `numRows` x `numCols` and values of zeros
    */
   def zeros(numRows: Int, numCols: Int): Matrix = DenseMatrix.zeros(numRows, numCols)
 
@@ -1030,21 +1029,21 @@ object Matrices {
    * Generate a `DenseMatrix` consisting of ones.
    * @param numRows number of rows of the matrix
    * @param numCols number of columns of the matrix
-   * @return `DenseMatrix` with size `numRows` x `numCols` and values of ones
+   * @return `Matrix` with size `numRows` x `numCols` and values of ones
    */
   def ones(numRows: Int, numCols: Int): Matrix = DenseMatrix.ones(numRows, numCols)
 
   /**
    * Generate an Identity Matrix in `DenseMatrix` format.
    * @param n number of rows and columns of the matrix
-   * @return `DenseMatrix` with size `n` x `n` and values of ones on the diagonal
+   * @return `Matrix` with size `n` x `n` and values of ones on the diagonal
    */
   def eye(n: Int): Matrix = DenseMatrix.eye(n)
 
   /**
    * Generate an Identity Matrix in `SparseMatrix` format.
    * @param n number of rows and columns of the matrix
-   * @return `SparseMatrix` with size `n` x `n` and values of ones on the diagonal
+   * @return `Matrix` with size `n` x `n` and values of ones on the diagonal
    */
   def speye(n: Int): Matrix = SparseMatrix.speye(n)
 
@@ -1052,7 +1051,7 @@ object Matrices {
    * Generate a `DenseMatrix` consisting of i.i.d. uniform random numbers.
    * @param numRows number of rows of the matrix
    * @param numCols number of columns of the matrix
-   * @return `DenseMatrix` with size `numRows` x `numCols` and values in U(0, 1)
+   * @return `Matrix` with size `numRows` x `numCols` and values in U(0, 1)
    */
   def rand(numRows: Int, numCols: Int): Matrix = DenseMatrix.rand(numRows, numCols)
 
@@ -1060,7 +1059,7 @@ object Matrices {
    * Generate a `DenseMatrix` consisting of i.i.d. gaussian random numbers.
    * @param numRows number of rows of the matrix
    * @param numCols number of columns of the matrix
-   * @return `DenseMatrix` with size `numRows` x `numCols` and values in N(0, 1)
+   * @return `Matrix` with size `numRows` x `numCols` and values in N(0, 1)
    */
   def randn(numRows: Int, numCols: Int): Matrix = DenseMatrix.randn(numRows, numCols)
 
@@ -1099,7 +1098,7 @@ object Matrices {
    * [[org.apache.spark.mllib.linalg.SparseMatrix.diag()]] in order to generate the matrix in
    * `SparseMatrix` format.
    * @param vector a `Vector` that will form the values on the diagonal of the matrix
-   * @return Square `DenseMatrix` with size `values.length` x `values.length` and `values`
+   * @return Square `Matrix` with size `values.length` x `values.length` and `values`
    *         on the diagonal
    */
   def diag(vector: Vector): Matrix = DenseMatrix.diag(vector)
@@ -1108,7 +1107,7 @@ object Matrices {
    * Horizontally concatenate a sequence of matrices. The returned matrix will be in the format
    * the matrices are supplied in. Supplying a mix of dense and sparse matrices is not supported.
    * @param matrices sequence of matrices
-   * @return a single `DenseMatrix` composed of the matrices that were horizontally concatenated
+   * @return a single `Matrix` composed of the matrices that were horizontally concatenated
    */
   private[mllib] def horzCat(matrices: Seq[Matrix]): Matrix = {
     if (matrices.size == 1) {
@@ -1125,14 +1124,10 @@ object Matrices {
         case dense: DenseMatrix => isDense = true
       }
     }
-    require(isSparse ^ isDense, "Both sparse and dense matrices are supplied. " +
-      "horzCat doesn't support concatenating dense and sparse matrices.")
     require(rowsMatch, "The number of rows of the matrices in this array, don't match!")
     var numCols = 0
     matrices.foreach(numCols += _.numCols)
-    if (isDense) {
-      new DenseMatrix(numRows, numCols, matrices.flatMap(_.toArray).toArray)
-    } else {
+    if (isSparse && !isDense) {
       val allColPtrs: Array[Int] = Array(0) ++ matrices.flatMap { mat =>
         val ptr = mat.asInstanceOf[SparseMatrix].colPtrs
         ptr.slice(1, ptr.length)
@@ -1144,7 +1139,12 @@ object Matrices {
       }
       new SparseMatrix(numRows, numCols, adjustedPtrs,
         matrices.flatMap(_.asInstanceOf[SparseMatrix].rowIndices).toArray,
-          matrices.flatMap(_.asInstanceOf[SparseMatrix].values).toArray)
+        matrices.flatMap(_.asInstanceOf[SparseMatrix].values).toArray)
+    } else if (!isSparse && !isDense) {
+      throw new IllegalArgumentException("The supplied matrices are neither in SparseMatrix or" +
+        " DenseMatrix format!")
+    }else {
+      new DenseMatrix(numRows, numCols, matrices.flatMap(_.toArray).toArray)
     }
   }
   // partitionMetaData correspond to the index of the partition and the max number of non-zeros
@@ -1152,8 +1152,8 @@ object Matrices {
   private[mllib] def fromRDD(
       rows: RDD[(Double, Vector)],
       partitionMetaData: Array[(Int, Int)],
-      buildSparseThreshold: Double = 0.2,
-      batchSize : Int = 8,
+      batchSize : Int,
+      buildSparseThreshold: Double,
       generateOnTheFly: Boolean = true): RDD[(DenseMatrix, Matrix)] = {
 
     if (!generateOnTheFly){
@@ -1191,17 +1191,18 @@ object Matrices {
     val numFeatures = rows.first()._2.size
 
     val partitionMetaData = rows.mapPartitionsWithIndex { case (ind, iter) =>
-
       val matrixBuffer =
         (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(batchSize, numFeatures))
       var partitionMaxNNZ = -1
-      iter.grouped(batchSize).foreach { rows =>
-        val (metaData, _) = fromSeqIntoBuffer(rows, matrixBuffer, batchSize)
+
+      iter.grouped(batchSize).foreach { r =>
+        val (metaData, _) = fromSeqIntoBuffer(r, matrixBuffer, batchSize)
         val maxNNZ =
           if (metaData > partitionMaxNNZ) metaData else partitionMaxNNZ
 
         partitionMaxNNZ = maxNNZ
       }
+
       Iterator((ind, partitionMaxNNZ))
     }
     partitionMetaData.collect()
@@ -1225,7 +1226,6 @@ object Matrices {
     val matrixBuffer = buffer._2
     val metadata = flattenMatrix(rows, matrixBuffer, labelBuffer, batchSize)
 
-    println(s"\n\nMatrix:\n$buffer")
     (metadata, buffer)
   }
 
