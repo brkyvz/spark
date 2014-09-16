@@ -161,7 +161,7 @@ object MultiModelGradientDescent extends Logging {
 
     val numExamples = data.count()
     val miniBatchSize = numExamples * miniBatchFraction
-    val numModels = stepSize.length * regParam.length * numIterations.length
+    val numModels = stepSize.length * regParam.length
     val numFeatures = initialWeights.size
     val numRegularizers = updater.length
     val updaterCounter = 0 until numRegularizers
