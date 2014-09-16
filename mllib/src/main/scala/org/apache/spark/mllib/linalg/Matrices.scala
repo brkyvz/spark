@@ -1170,13 +1170,13 @@ object Matrices {
             val nnz = findPartition.get._2
             val density = nnz * 1.0 / (numFeatures * batchSize)
             if (density <= buildSparseThreshold) {
-              (DenseMatrix.zeros(batchSize, 1), new SparseMatrix(batchSize, numFeatures,
-                Array.fill(numFeatures + 1)(0), Array.fill(nnz)(0), Array.fill(nnz)(0.0)))
+              (DenseMatrix.zeros(batchSize, 1), new SparseMatrix(numFeatures, batchSize,
+                Array.fill(batchSize + 1)(0), Array.fill(nnz)(0), Array.fill(nnz)(0.0)))
             } else {
-              (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(batchSize, numFeatures))
+              (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(numFeatures, batchSize))
             }
           } else {
-            (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(batchSize, numFeatures))
+            (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(numFeatures, batchSize))
           }
         iter.grouped(batchSize).map(fromSeqIntoBuffer(_, matrixBuffer, batchSize)._2)
       }
@@ -1192,7 +1192,7 @@ object Matrices {
 
     val partitionMetaData = rows.mapPartitionsWithIndex { case (ind, iter) =>
       val matrixBuffer =
-        (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(batchSize, numFeatures))
+        (DenseMatrix.zeros(batchSize, 1), DenseMatrix.zeros(numFeatures, batchSize))
       var partitionMaxNNZ = -1
 
       iter.grouped(batchSize).foreach { r =>
@@ -1240,24 +1240,36 @@ object Matrices {
     var nnz = 0
     matrixInto match {
       case intoSparse: SparseMatrix =>
-        val entries = new PriorityQueue[LocalMatrixEntry]()(MatrixEntryOrdering)
+        //val entries = new PriorityQueue[LocalMatrixEntry]()(MatrixEntryOrdering)
         for (r <- vals) {
           labelsInto.values(i) = r._1
           r._2 match {
             case sVec: SparseVector =>
+              /*
               val len = sVec.indices.length
               var j = 0
               while (j < len) {
                 entries += new LocalMatrixEntry(i, sVec.indices(j), sVec.values(j))
                 nnz += 1
                 j += 1
+              }*/
+              val len = sVec.indices.length
+              var j = 0
+              intoSparse.colPtrs(i) = nnz
+              while (j < len) {
+                intoSparse.rowIndices(nnz) = sVec.indices(j)
+                intoSparse.values(nnz) = sVec.values(j)
+                nnz += 1
+                j += 1
               }
             case dVec: DenseVector =>
               var j = 0
+              intoSparse.colPtrs(i) = nnz
               while (j < numFeatures) {
                 val value = dVec.values(j)
                 if (value != 0.0) {
-                  entries += new LocalMatrixEntry(i, j, value)
+                  intoSparse.rowIndices(nnz) = j
+                  intoSparse.values(nnz) = dVec.values(j)
                   nnz += 1
                 }
                 j += 1
@@ -1265,8 +1277,13 @@ object Matrices {
           }
           i += 1
         }
-        var lastCol = -1
-        var entryCount = 0
+        while (i < batchSize) {
+          intoSparse.colPtrs(i) = nnz
+          i += 1
+        }
+        //var lastCol = -1
+        //var entryCount = 0
+        /*
         while (entries.nonEmpty) {
           val entry = entries.dequeue()
           intoSparse.rowIndices(entryCount) = entry.i
@@ -1277,30 +1294,41 @@ object Matrices {
           }
           entryCount += 1
         }
-        assert(entryCount == nnz)
+        */
+        //assert(entryCount == nnz)
         // clear existing values if we can not fill up the matrix. Enough to keep colPtrs constant.
-        while (lastCol != numFeatures) {
-          lastCol += 1
-          intoSparse.colPtrs(lastCol) = entryCount
-        }
+        //while (lastCol != numFeatures) {
+        //  lastCol += 1
+        //  intoSparse.colPtrs(lastCol) = entryCount
+        //}
+
       case intoDense: DenseMatrix =>
         for (r <- vals) {
           labelsInto.values(i) = r._1
+          val startIndex = numFeatures * i
           r._2 match {
             case sVec: SparseVector =>
               val len = sVec.indices.length
               var j = 0
               while (j < len) {
-                intoDense.values(i + batchSize * sVec.indices(j)) = sVec.values(j)
+                intoDense.values(startIndex + sVec.indices(j)) = sVec.values(j)
                 nnz += 1
                 j += 1
               }
             case dVec: DenseVector =>
               var j = 0
+              /*
               while (j < numFeatures) {
                 val value = dVec.values(j)
                 if (value != 0.0) nnz += 1
                 intoDense.values(i + batchSize * j) = value
+                j += 1
+              }
+              */
+              while (j < numFeatures) {
+                val value = dVec.values(j)
+                if (value != 0.0) nnz += 1
+                intoDense.values(j + startIndex) = value
                 j += 1
               }
           }
@@ -1308,10 +1336,11 @@ object Matrices {
         }
         // clear existing values if we can not fill up the matrix
         if (numExamples != batchSize) {
-          for (j <- 0 until numFeatures) {
-            for (i <- numExamples until batchSize) {
-              intoDense.values(i + batchSize * j) = 0.0
-            }
+          var j = numExamples * numFeatures
+          val len = intoDense.values.length
+          while (j < len) {
+            intoDense.values(j) = 0.0
+            j += 1
           }
         }
       }
