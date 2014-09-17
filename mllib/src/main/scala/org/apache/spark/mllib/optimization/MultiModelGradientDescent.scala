@@ -190,7 +190,7 @@ object MultiModelGradientDescent extends Logging {
 
     val bcMetaData =
       if (useSparse) {
-        data.context.broadcast(Matrices.getSparsityData(data))
+        data.context.broadcast(Matrices.getSparsityData(data, batchSize))
       } else {
         val emptyData: Array[(Int, Int)] = (0 until data.partitions.length).map { i =>
           (i, -1)}.toArray

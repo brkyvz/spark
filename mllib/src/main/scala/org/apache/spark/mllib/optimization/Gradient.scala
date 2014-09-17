@@ -427,7 +427,7 @@ class MultiModelLeastSquaresGradientv2 extends MultiModelGradientv2 {
         case dV: DenseVector =>
           new DenseMatrix(dV.size, 1, dV.values)
         case sV: SparseVector =>
-          new SparseMatrix(sV.size, 1, Array(0, sV.size + 1), sV.indices, sV.values)
+          new SparseMatrix(sV.size, 1, Array(0, sV.indices.length + 1), sV.indices, sV.values)
       }
     val gradient = DenseMatrix.zeros(weights.numRows, weights.numCols)
 
@@ -448,7 +448,7 @@ class MultiModelLeastSquaresGradientv2 extends MultiModelGradientv2 {
         case dV: DenseVector =>
           new DenseMatrix(dV.size, 1, dV.values)
         case sV: SparseVector =>
-          new SparseMatrix(sV.size, 1, Array(0, sV.size + 1), sV.indices, sV.values)
+          new SparseMatrix(sV.size, 1, Array(0, sV.indices.length + 1), sV.indices, sV.values)
       }
     gemm(false, false, 2.0, dataMat, diff, 0.0, cumGradient)
 

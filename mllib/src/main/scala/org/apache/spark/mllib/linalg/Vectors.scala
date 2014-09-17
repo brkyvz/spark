@@ -219,7 +219,7 @@ class DenseVector(val values: Array[Double]) extends Vector {
         while (j < sparse.numCols) {
           var i = sparse.colPtrs(j)
           val indEnd = sparse.colPtrs(j + 1)
-          var sum = 0
+          var sum = 0.0
           while (i < indEnd) {
             sum += values(sparse.rowIndices(i)) * sparse.values(i)
             i += 1
@@ -231,7 +231,7 @@ class DenseVector(val values: Array[Double]) extends Vector {
         while (j < dense.numCols) {
           var i = 0
           val indEnd = dense.numRows
-          var sum = 0
+          var sum = 0.0
           val Bstart = j * dense.numRows
           while (i < indEnd) {
             sum += values(i) * dense.values(Bstart + i)
@@ -291,7 +291,7 @@ class SparseVector(
         while (j < dense.numCols) {
           var i = 0
           val indEnd = indices.length
-          var sum = 0
+          var sum = 0.0
           val Bstart = j * dense.numRows
           while (i < indEnd) {
             sum += values(i) * dense.values(Bstart + indices(i))
