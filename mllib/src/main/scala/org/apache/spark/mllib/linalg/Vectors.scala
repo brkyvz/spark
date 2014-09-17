@@ -72,6 +72,8 @@ trait Vector extends Serializable {
   def copy: Vector = {
     throw new NotImplementedError(s"copy is not implemented for ${this.getClass}.")
   }
+
+  def times(y: Matrix): Matrix
 }
 
 /**
@@ -206,6 +208,41 @@ class DenseVector(val values: Array[Double]) extends Vector {
   override def copy: DenseVector = {
     new DenseVector(values.clone())
   }
+
+  def times(y: Matrix): Matrix = {
+    val C = new DenseMatrix(1, y.numCols, Array.fill(y.numCols)(0.0))
+    val len = this.size
+    require(len == y.numRows)
+    var j = 0
+    y match {
+      case sparse: SparseMatrix =>
+        while (j < sparse.numCols) {
+          var i = sparse.colPtrs(j)
+          val indEnd = sparse.colPtrs(j + 1)
+          var sum = 0
+          while (i < indEnd) {
+            sum += values(sparse.rowIndices(i)) * sparse.values(i)
+            i += 1
+          }
+          C.values(j) = sum
+          j += 1
+        }
+      case dense: DenseMatrix =>
+        while (j < dense.numCols) {
+          var i = 0
+          val indEnd = dense.numRows
+          var sum = 0
+          val Bstart = j * dense.numRows
+          while (i < indEnd) {
+            sum += values(i) * dense.values(Bstart + i)
+            i += 1
+          }
+          C.values(j) = sum
+          j += 1
+        }
+    }
+    C
+  }
 }
 
 /**
@@ -241,4 +278,29 @@ class SparseVector(
   }
 
   private[mllib] override def toBreeze: BV[Double] = new BSV[Double](indices, values, size)
+
+  def times(y: Matrix): Matrix = {
+    val C = new DenseMatrix(1, y.numCols, Array.fill(y.numCols)(0.0))
+    val len = this.size
+    require(len == y.numRows)
+    var j = 0
+    y match {
+      case sparse: SparseMatrix =>
+        throw new IllegalArgumentException("Not supported")
+      case dense: DenseMatrix =>
+        while (j < dense.numCols) {
+          var i = 0
+          val indEnd = indices.length
+          var sum = 0
+          val Bstart = j * dense.numRows
+          while (i < indEnd) {
+            sum += values(i) * dense.values(Bstart + indices(i))
+            i += 1
+          }
+          C.values(j) = sum
+          j += 1
+        }
+    }
+    C
+  }
 }

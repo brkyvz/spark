@@ -193,6 +193,39 @@ abstract class MultiModelGradient extends Serializable {
 
 /**
  * :: DeveloperApi ::
+ * Class used to compute the gradient for a loss function, given a series of data points.
+ */
+@DeveloperApi
+abstract class MultiModelGradientv2 extends Serializable {
+  /**
+   * Compute the gradient and loss given the features of all data points.
+   *
+   * @param data features for one data point
+   * @param label label for this data point
+   * @param weights weights/coefficients corresponding to features
+   *
+   * @return (gradient: DenseMatrix, loss: Double)
+   */
+  def compute(data: Vector, label: Double,
+              weights: DenseMatrix): (DenseMatrix, Matrix)
+
+  /**
+   * Compute the gradient and loss given the features of a series of data point,
+   * add the gradient to a provided matrix to avoid creating new objects, and return loss.
+   *
+   * @param data features for the data points
+   * @param label label for the data points
+   * @param weights weights/coefficients corresponding to features
+   * @param cumGradient the computed gradient will be added to this matrix
+   *
+   * @return loss
+   */
+  def compute(data: Vector, label: Double,
+              weights: DenseMatrix, cumGradient: DenseMatrix): Matrix
+}
+
+/**
+ * :: DeveloperApi ::
  * Compute gradient and loss for a logistic loss function, as used in binary classification.
  * See also the documentation for the precise formulation.
  */
@@ -373,5 +406,52 @@ class MultiModelHingeGradient extends MultiModelGradient {
     } else {
       loss.colSums
     }
+  }
+}
+
+/**
+ * :: DeveloperApi ::
+ * Compute gradient and loss for a Least-squared loss function, as used in linear regression.
+ * This is correct for the averaged least squares loss function (mean squared error)
+ *              L = 1/n ||A weights-y||^2
+ * See also the documentation for the precise formulation.
+ */
+@DeveloperApi
+class MultiModelLeastSquaresGradientv2 extends MultiModelGradientv2 {
+  override def compute(data: Vector, label: Double,
+                       weights: DenseMatrix): (DenseMatrix, Matrix) = {
+
+    val diff = (data times weights).elementWiseOperateScalarInPlace(_ - _, label)
+    val dataMat =
+      data match {
+        case dV: DenseVector =>
+          new DenseMatrix(dV.size, 1, dV.values)
+        case sV: SparseVector =>
+          new SparseMatrix(sV.size, 1, Array(0, sV.size + 1), sV.indices, sV.values)
+      }
+    val gradient = DenseMatrix.zeros(weights.numRows, weights.numCols)
+
+    gemm(false, false, 2.0, dataMat, diff, 0.0, gradient)
+
+    val loss = diff.update(v => v * v)
+
+    (gradient, loss)
+  }
+
+  override def compute(data: Vector,
+                       label: Double,
+                       weights: DenseMatrix,
+                       cumGradient: DenseMatrix): Matrix = {
+    val diff = (data times weights).elementWiseOperateScalarInPlace(_ - _, label)
+    val dataMat =
+      data match {
+        case dV: DenseVector =>
+          new DenseMatrix(dV.size, 1, dV.values)
+        case sV: SparseVector =>
+          new SparseMatrix(sV.size, 1, Array(0, sV.size + 1), sV.indices, sV.values)
+      }
+    gemm(false, false, 2.0, dataMat, diff, 0.0, cumGradient)
+
+    diff.update(v => v * v)
   }
 }

@@ -689,4 +689,169 @@ private[mllib] object BLAS extends Serializable with Logging {
       }
     }
   }
+  /*
+  /**
+   * y := alpha * A * x + beta * y
+   * @param trans specify whether to use matrix A, or the transpose of matrix A. Should be "N" or
+   *               "n" to use A, and "T" or "t" to use the transpose of A.
+   * @param alpha a scalar to scale the multiplication A * x.
+   * @param A the matrix A that will be left multiplied to x. Size of m x n.
+   * @param x the vector x that will be left multiplied by A. Size of n x 1.
+   * @param beta a scalar that can be used to scale vector y.
+   * @param y the resulting vector y. Size of m x 1.
+   */
+  def gevm(
+            trans: Boolean,
+            alpha: Double,
+            A: Vector,
+            x: Matrix,
+            beta: Double,
+            y: Matrix): Unit = {
+
+    val len = A.size
+    val kx
+
+    require(nA == nx, s"The columns of A don't match the number of elements of x. A: $nA, x: $nx")
+    require(mA == y.size,
+      s"The rows of A don't match the number of elements of y. A: $mA, y:${y.size}}")
+    if (alpha == 0.0) {
+      logWarning("gemv: alpha is equal to 0. Returning y.")
+    } else {
+      A match {
+        case sparse: SparseMatrix =>
+          gemv(trans, alpha, sparse, x, beta, y)
+        case dense: DenseMatrix =>
+          gemv(trans, alpha, dense, x, beta, y)
+        case _ =>
+          throw new IllegalArgumentException(s"gemv doesn't support matrix type ${A.getClass}.")
+      }
+    }
+  }
+
+  /**
+   * y := alpha * A * x + beta * y
+   *
+   * @param alpha a scalar to scale the multiplication A * x.
+   * @param A the matrix A that will be left multiplied to x. Size of m x n.
+   * @param x the vector x that will be left multiplied by A. Size of n x 1.
+   * @param beta a scalar that can be used to scale vector y.
+   * @param y the resulting vector y. Size of m x 1.
+   */
+  def gevm(
+            alpha: Double,
+            A: Matrix,
+            x: DenseVector,
+            beta: Double,
+            y: DenseVector): Unit = {
+    gemv(false, alpha, A, x, beta, y)
+  }
+
+  /**
+   * y := alpha * A * x
+   *
+   * @param trans specify whether to use matrix A, or the transpose of matrix A. Should be "N" or
+   *               "n" to use A, and "T" or "t" to use the transpose of A.
+   * @param alpha a scalar to scale the multiplication A * x.
+   * @param A the matrix A that will be left multiplied to x. Size of m x n.
+   * @param x the vector x that will be left multiplied by A. Size of n x 1.
+   *
+   * @return `DenseVector` y, the result of the matrix-vector multiplication. Size of m x 1.
+   */
+  def gemv(
+            trans: Boolean,
+            alpha: Double,
+            A: Matrix,
+            x: DenseVector): DenseVector = {
+    val m = if(!trans) A.numRows else A.numCols
+
+    val y: DenseVector = new DenseVector(Array.fill(m)(0.0))
+    gemv(trans, alpha, A, x, 0.0, y)
+
+    y
+  }
+
+  /**
+   * y := alpha * A * x
+   *
+   * @param alpha a scalar to scale the multiplication A * x.
+   * @param A the matrix A that will be left multiplied to x. Size of m x n.
+   * @param x the vector x that will be left multiplied by A. Size of n x 1.
+   *
+   * @return `DenseVector` y, the result of the matrix-vector multiplication. Size of m x 1.
+   */
+  def gemv(
+            alpha: Double,
+            A: Matrix,
+            x: DenseVector): DenseVector = {
+    gemv(false, alpha, A, x)
+  }
+
+
+  /**
+   * y := alpha * A * x + beta * y
+   * For `DenseMatrix` A.
+   */
+  private def gemv(
+                    trans: Boolean,
+                    alpha: Double,
+                    A: DenseMatrix,
+                    x: DenseVector,
+                    beta: Double,
+                    y: DenseVector): Unit =  {
+    val tStrA = if (!trans) "N" else "T"
+    nativeBLAS.dgemv(tStrA, A.numRows, A.numCols, alpha, A.values, A.numRows, x.values, 1, beta,
+      y.values, 1)
+  }
+
+  /**
+   * y := alpha * A * x + beta * y
+   * For `SparseMatrix` A.
+   */
+  private def gemv(
+                    trans: Boolean,
+                    alpha: Double,
+                    A: SparseMatrix,
+                    x: DenseVector,
+                    beta: Double,
+                    y: DenseVector): Unit =  {
+
+    val mA: Int = if(!trans) A.numRows else A.numCols
+    val nA: Int = if(!trans) A.numCols else A.numRows
+
+    val Avals = A.values
+    val Arows = if (!trans) A.rowIndices else A.colPtrs
+    val Acols = if (!trans) A.colPtrs else A.rowIndices
+
+    // Slicing is easy in this case. This is the optimal multiplication setting for sparse matrices
+    if (trans){
+      var rowCounter = 0
+      while (rowCounter < mA){
+        var i = Arows(rowCounter)
+        var sum = 0.0
+        while(i < Arows(rowCounter + 1)){
+          sum += Avals(i) * x.values(Acols(i))
+          i += 1
+        }
+        y.values(rowCounter) =  beta * y.values(rowCounter) + sum * alpha
+        rowCounter += 1
+      }
+    } else {
+      // Scale vector first if `beta` is not equal to 0.0
+      if (beta != 0.0){
+        scal(beta, y)
+      }
+      // Perform matrix-vector multiplication and add to y
+      var colCounterForA = 0
+      while (colCounterForA < nA){
+        var i = Acols(colCounterForA)
+        while (i < Acols(colCounterForA + 1)){
+          val rowIndex = Arows(i)
+          y.values(rowIndex) += Avals(i) * x.values(colCounterForA) * alpha
+          i += 1
+        }
+        colCounterForA += 1
+      }
+    }
+  }
+  */
 }
