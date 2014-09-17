@@ -27,7 +27,7 @@ import scala.collection.mutable.{ArrayBuffer, PriorityQueue}
 /**
  * Trait for a local matrix.
  */
-trait Matrix extends Serializable {
+sealed trait Matrix extends Serializable {
 
   /** Number of rows. */
   def numRows: Int
