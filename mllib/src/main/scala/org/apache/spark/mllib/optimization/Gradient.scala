@@ -160,7 +160,7 @@ class HingeGradient extends Gradient {
 
 /**
  * :: DeveloperApi ::
- * Class used to compute the gradient for a loss function, given a single data point.
+ * Class used to compute the gradient for a loss function, given a series of data points.
  */
 @DeveloperApi
 abstract class MultiModelGradient extends Serializable {
@@ -177,13 +177,13 @@ abstract class MultiModelGradient extends Serializable {
                        weights: DenseMatrix): (DenseMatrix, Matrix)
 
   /**
-   * Compute the gradient and loss given the features of a single data point,
-   * add the gradient to a provided vector to avoid creating new objects, and return loss.
+   * Compute the gradient and loss given the features of a series of data point,
+   * add the gradient to a provided matrix to avoid creating new objects, and return loss.
    *
-   * @param data features for one data point
-   * @param label label for this data point
+   * @param data features for the data points
+   * @param label label for the data points
    * @param weights weights/coefficients corresponding to features
-   * @param cumGradient the computed gradient will be added to this vector
+   * @param cumGradient the computed gradient will be added to this matrix
    *
    * @return loss
    */
@@ -222,7 +222,7 @@ class MultiModelLogisticGradient extends MultiModelGradient {
 
     val lossVector =
       if (data.isInstanceOf[DenseMatrix]) {
-        val numFeatures = data.numCols
+        val numFeatures = data.numRows
         val zeroEntries = data.compare(0.0, _ == _)
         val shouldSkip = zeroEntries.colSums.compareInPlace(numFeatures, _ == _)
         loss.colSums(false, shouldSkip)
@@ -247,7 +247,7 @@ class MultiModelLogisticGradient extends MultiModelGradient {
       elementWiseOperateInPlace(_ + _, addMargin)
 
     if (data.isInstanceOf[DenseMatrix]) {
-      val numFeatures = data.numCols
+      val numFeatures = data.numRows
       val zeroEntries = data.compare(0.0, _ == _)
       val shouldSkip = zeroEntries.colSums.compareInPlace(numFeatures, _ == _)
       loss.colSums(false, shouldSkip)
@@ -279,7 +279,7 @@ class MultiModelLeastSquaresGradient extends MultiModelGradient {
 
     val lossVector =
       if (data.isInstanceOf[DenseMatrix]) {
-        val numFeatures = data.numCols
+        val numFeatures = data.numRows
         val zeroEntries = data.compare(0.0, _ == _)
         val shouldSkip = zeroEntries.colSums.compareInPlace(numFeatures, _ == _)
         loss.colSums(false, shouldSkip)
@@ -299,7 +299,7 @@ class MultiModelLeastSquaresGradient extends MultiModelGradient {
     val loss = diff.update(v => v * v)
 
     if (data.isInstanceOf[DenseMatrix]) {
-      val numFeatures = data.numCols
+      val numFeatures = data.numRows
       val zeroEntries = data.compare(0.0, _ == _)
       val shouldSkip = zeroEntries.colSums.compareInPlace(numFeatures, _ == _)
       loss.colSums(false, shouldSkip)
@@ -324,11 +324,11 @@ class MultiModelHingeGradient extends MultiModelGradient {
     val dotProduct = data transposeTimes weights
     // Our loss function with {0, 1} labels is max(0, 1 - (2y – 1) (f_w(x)))
     // Therefore the gradient is -(2y - 1)*x
-    val labelScaled = label.map(_ * 2.0 - 1.0)
+    val labelScaled = new DenseMatrix(1, label.numRows, label.map(_ * 2 - 1.0).values)
 
     dotProduct.elementWiseOperateOnColumnsInPlace(_ * _, labelScaled)
 
-    val gradientMultiplier = data.elementWiseOperateOnColumns(_ * _, labelScaled.negInPlace)
+    val gradientMultiplier = data.elementWiseOperateOnRows(_ * _, labelScaled.negInPlace)
     val gradient = DenseMatrix.zeros(weights.numRows, weights.numCols)
     val activeExamples = dotProduct.compare(1.0, _ < _) // Examples where the hinge is active
 
@@ -338,7 +338,7 @@ class MultiModelHingeGradient extends MultiModelGradient {
 
     val lossVector =
       if (data.isInstanceOf[DenseMatrix]) {
-        val numFeatures = data.numCols
+        val numFeatures = data.numRows
         val zeroEntries = data.compare(0.0, _ == _)
         val shouldSkip = zeroEntries.colSums.compareInPlace(numFeatures, _ == _)
         loss.colSums(false, shouldSkip)
@@ -354,9 +354,10 @@ class MultiModelHingeGradient extends MultiModelGradient {
     val dotProduct = data transposeTimes weights
     // Our loss function with {0, 1} labels is max(0, 1 - (2y – 1) (f_w(x)))
     // Therefore the gradient is -(2y - 1)*x
-    val labelScaled = label.map(_ * 2 - 1.0)
+    val labelScaled = new DenseMatrix(1, label.numRows, label.map(_ * 2 - 1.0).values)
     dotProduct.elementWiseOperateOnColumnsInPlace(_ * _, labelScaled)
-    val gradientMultiplier = data.elementWiseOperateOnColumns(_ * _,labelScaled.negInPlace)
+
+    val gradientMultiplier = data.elementWiseOperateOnRows(_ * _, labelScaled.negInPlace)
 
     val activeExamples = dotProduct.compare(1.0, _ < _) // Examples where the hinge is active
 
@@ -365,7 +366,7 @@ class MultiModelHingeGradient extends MultiModelGradient {
     val loss = activeExamples.elementWiseOperateInPlace(_ * _, dotProduct.update(1 - _))
 
     if (data.isInstanceOf[DenseMatrix]) {
-      val numFeatures = data.numCols
+      val numFeatures = data.numRows
       val zeroEntries = data.compare(0.0, _ == _)
       val shouldSkip = zeroEntries.colSums.compareInPlace(numFeatures, _ == _)
       loss.colSums(false, shouldSkip)

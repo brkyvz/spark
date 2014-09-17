@@ -1240,19 +1240,10 @@ object Matrices {
     var nnz = 0
     matrixInto match {
       case intoSparse: SparseMatrix =>
-        //val entries = new PriorityQueue[LocalMatrixEntry]()(MatrixEntryOrdering)
         for (r <- vals) {
           labelsInto.values(i) = r._1
           r._2 match {
             case sVec: SparseVector =>
-              /*
-              val len = sVec.indices.length
-              var j = 0
-              while (j < len) {
-                entries += new LocalMatrixEntry(i, sVec.indices(j), sVec.values(j))
-                nnz += 1
-                j += 1
-              }*/
               val len = sVec.indices.length
               var j = 0
               intoSparse.colPtrs(i) = nnz
@@ -1281,27 +1272,6 @@ object Matrices {
           intoSparse.colPtrs(i) = nnz
           i += 1
         }
-        //var lastCol = -1
-        //var entryCount = 0
-        /*
-        while (entries.nonEmpty) {
-          val entry = entries.dequeue()
-          intoSparse.rowIndices(entryCount) = entry.i
-          intoSparse.values(entryCount) = entry.value
-          while (lastCol != entry.j) {
-            lastCol += 1
-            intoSparse.colPtrs(lastCol) = entryCount
-          }
-          entryCount += 1
-        }
-        */
-        //assert(entryCount == nnz)
-        // clear existing values if we can not fill up the matrix. Enough to keep colPtrs constant.
-        //while (lastCol != numFeatures) {
-        //  lastCol += 1
-        //  intoSparse.colPtrs(lastCol) = entryCount
-        //}
-
       case intoDense: DenseMatrix =>
         for (r <- vals) {
           labelsInto.values(i) = r._1
@@ -1317,14 +1287,6 @@ object Matrices {
               }
             case dVec: DenseVector =>
               var j = 0
-              /*
-              while (j < numFeatures) {
-                val value = dVec.values(j)
-                if (value != 0.0) nnz += 1
-                intoDense.values(i + batchSize * j) = value
-                j += 1
-              }
-              */
               while (j < numFeatures) {
                 val value = dVec.values(j)
                 if (value != 0.0) nnz += 1

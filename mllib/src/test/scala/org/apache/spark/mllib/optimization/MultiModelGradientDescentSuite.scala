@@ -168,7 +168,7 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     val data = testData.map { case LabeledPoint(label, features) =>
       label -> Vectors.dense(1.0 +: features.toArray)
     }
-    val numModels = stepSize.length * numIterations.length * regParam.length
+    val numModels = stepSize.length * regParam.length
 
     val dataRDD = sc.parallelize(data, 2).cache()
 
@@ -238,7 +238,7 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     val initialWeights = Array.fill(10000)(0.0)
     // Add a extra variable consisting of all 1.0's for the intercept.
 
-    val numModels = stepSize.length * numIterations.length * regParam.length
+    val numModels = stepSize.length * regParam.length
 
     val forLoop = (0 until numModels).map { i =>
       val (weightsGD, loss) = GradientDescent.runMiniBatchSGD(
@@ -273,7 +273,7 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     assert(lastFromGD ~== mmLoss.last absTol 1e-10)
   }
 
-  test("Check for correctness: LeastSquaresRegression-SquaredL2Updater)") {
+  test("Check for correctness: LeastSquaresRegression-SquaredL2Updater & multiple numIterations") {
     val nPoints = 100
     val numFeatures = 5
 
@@ -288,12 +288,12 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     val gradient = new MultiModelLeastSquaresGradient()
     val updater: Array[MultiModelUpdater] = Array(new MultiModelSquaredL2Updater())
     val stepSize = Array(1.0, 0.1)
-    val numIterations = Array(100)
+    val numIterations = Array(10, 20)
     val regParam = Array(0.0, 0.1, 1.0)
     val miniBatchFrac = 1.0
 
     val dataRDD = sc.parallelize(data, 2).map( p => (p.label, p.features)).cache()
-    val numModels = stepSize.length * numIterations.length * regParam.length
+    val numModels = stepSize.length * regParam.length
 
     val forLoop = (0 until numModels).map { i =>
       val (weightsGD2, loss) = GradientDescent.runMiniBatchSGD(
@@ -307,9 +307,21 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
         Vectors.dense(initialWeights.clone()))
       (weightsGD2, loss)
     }
-    val res = Matrices.horzCat(forLoop.map( v => new DenseMatrix(v._1.size, 1, v._1.toArray)))
+    val forLoop2 = (0 until numModels).map { i =>
+      val (weightsGD2, loss) = GradientDescent.runMiniBatchSGD(
+        dataRDD,
+        new LeastSquaresGradient(),
+        new SquaredL2Updater(),
+        stepSize(math.round(i * 1.0 / numModels).toInt),
+        numIterations(1),
+        regParam(i % regParam.length),
+        miniBatchFrac,
+        Vectors.dense(initialWeights.clone()))
+      (weightsGD2, loss)
+    }
+    val res = Matrices.horzCat(forLoop.map( v => new DenseMatrix(v._1.size, 1, v._1.toArray)) ++
+      forLoop2.map( v => new DenseMatrix(v._1.size, 1, v._1.toArray)))
 
-    val start3 = System.currentTimeMillis()
     val (weightsMMGD, mmLoss) = MultiModelGradientDescent.runMiniBatchMMSGD(
       dataRDD,
       gradient,
@@ -319,14 +331,17 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
       regParam,
       miniBatchFrac,
       Vectors.dense(initialWeights))
-    val dur3 = System.currentTimeMillis() - start3
 
     assert(res ~== weightsMMGD absTol 1e-10)
 
     val gdLosses1 = forLoop.map(_._2.last)
-    val lastFromGD = Vectors.dense(gdLosses1.toArray)
+    val gdLosses2 = forLoop2.map(_._2.last)
+    val lastFromGD = Vectors.dense((gdLosses1 ++ gdLosses2).toArray)
 
-    assert(lastFromGD ~== mmLoss.last absTol 1e-10)
+    val mmLossTogether = Vectors.dense(mmLoss(numIterations(0) - 1).toArray ++
+      mmLoss(numIterations(1) - 1).toArray)
+
+    assert(lastFromGD ~== mmLossTogether absTol 1e-10)
   }
 
   test("Check for correctness: SVM-(L1Updater+SquaredL2Updater)") {
@@ -354,7 +369,7 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
     val miniBatchFrac = 1.0
 
     val dataRDD = sc.parallelize(data, 2).cache()
-    val numModels = stepSize.length * regParam.length * numIterations.length
+    val numModels = stepSize.length * regParam.length
 
     val forLoop1 = (0 until numModels).map { i =>
       val (weightsGD2, loss) = GradientDescent.runMiniBatchSGD(
