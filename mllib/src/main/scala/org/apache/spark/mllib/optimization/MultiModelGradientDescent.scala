@@ -167,7 +167,8 @@ object MultiModelGradientDescent extends Logging {
     val updaterCounter = 0 until numRegularizers
     // Initialize weights as a column vector
     var weights = updaterCounter.map { i =>
-      new DenseMatrix(numFeatures, 1, initialWeights.toArray) times DenseMatrix.ones(1, numModels)
+      new DenseMatrix(numFeatures, 1, initialWeights.toArray).
+        multiply(DenseMatrix.ones(1, numModels))
     }
 
     var finalWeights: Matrix = new DenseMatrix(numFeatures, 0, Array.empty[Double])

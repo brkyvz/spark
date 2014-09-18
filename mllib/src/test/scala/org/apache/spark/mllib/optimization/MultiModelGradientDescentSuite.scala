@@ -62,7 +62,7 @@ object MultiModelGradientDescentSuite {
     val x = Array.fill[Array[Double]](nPoints)(
       Array.fill[Double](weights.length)(rnd.nextDouble() * 2.0 - 1.0))
     val y = x.map { xi =>
-      val yD = (new DenseMatrix(1, xi.length, xi) times weightsMat) +
+      val yD = (new DenseMatrix(1, xi.length, xi) multiply weightsMat) +
         intercept + 0.01 * rnd.nextGaussian()
       if (yD.toArray(0) < 0) 0.0 else 1.0
     }
@@ -136,13 +136,13 @@ class MultiModelGradientDescentSuite extends FunSuite with LocalSparkContext wit
       dataRDD, gradient, updater, Array(1.0), Array(1), regParam1, 1.0, initialWeightsWithIntercept)
 
     assert(
-      loss1(0)(0) ~= (loss0(0)(0) + (math.pow(initialWeightsWithIntercept(0), 2) +
+      loss1(0)(0) ~== (loss0(0)(0) + (math.pow(initialWeightsWithIntercept(0), 2) +
         math.pow(initialWeightsWithIntercept(1), 2)) / 2) absTol 1E-5,
       """For non-zero weights, the regVal should be \frac{1}{2}\sum_i w_i^2.""")
 
     assert(
-      (newWeights1(0) ~= (newWeights0(0) - initialWeightsWithIntercept(0)) absTol 1E-5) &&
-        (newWeights1(1) ~= (newWeights0(1) - initialWeightsWithIntercept(1)) absTol 1E-5),
+      (newWeights1(0, 0) ~== (newWeights0(0, 0) - initialWeightsWithIntercept(0)) absTol 1E-5) &&
+        (newWeights1(1, 0) ~== (newWeights0(1, 0) - initialWeightsWithIntercept(1)) absTol 1E-5),
       "The different between newWeights with/without regularization " +
         "should be initialWeightsWithIntercept.")
   }
