@@ -1280,9 +1280,16 @@ object Matrices {
             case sVec: SparseVector =>
               val len = sVec.indices.length
               var j = 0
-              while (j < len) {
-                intoDense.values(startIndex + sVec.indices(j)) = sVec.values(j)
-                nnz += 1
+              var sVecCounter = 0
+              while (j < numFeatures) {
+                intoDense.values(startIndex + j) = 0.0
+                if (sVecCounter < len) {
+                  if (j == sVec.indices(sVecCounter)) {
+                    intoDense.values(startIndex + j) = sVec.values(sVecCounter)
+                    nnz += 1
+                    sVecCounter += 1
+                  }
+                }
                 j += 1
               }
             case dVec: DenseVector =>
@@ -1290,7 +1297,7 @@ object Matrices {
               while (j < numFeatures) {
                 val value = dVec.values(j)
                 if (value != 0.0) nnz += 1
-                intoDense.values(j + startIndex) = value
+                intoDense.values(startIndex + j) = value
                 j += 1
               }
           }
@@ -1307,13 +1314,5 @@ object Matrices {
         }
       }
     nnz
-  }
-  private case class LocalMatrixEntry(i: Int, j: Int, value: Double)
-
-  private object MatrixEntryOrdering extends Ordering[LocalMatrixEntry] {
-    def compare(a:LocalMatrixEntry, b:LocalMatrixEntry) = {
-      val colOrdering = b.j compare a.j
-      if (colOrdering == 0) b.i compare a.i else colOrdering
-    }
   }
 }
