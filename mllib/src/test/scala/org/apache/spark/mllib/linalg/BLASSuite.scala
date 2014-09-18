@@ -137,9 +137,9 @@ class BLASSuite extends FunSuite {
     val sB = new SparseMatrix(3, 2, Array(0, 1, 3), Array(0, 1, 2), Array(1.0, 2.0, 1.0))
     val expected = new DenseMatrix(4, 2, Array(0.0, 1.0, 0.0, 0.0, 4.0, 0.0, 2.0, 3.0))
 
-    assert(dA times B ~== expected absTol 1e-15)
-    assert(sA times B ~== expected absTol 1e-15)
-    assert(dA times sB ~== expected absTol 1e-15)
+    assert(dA multiply B ~== expected absTol 1e-15)
+    assert(sA multiply B ~== expected absTol 1e-15)
+    assert(dA multiply sB ~== expected absTol 1e-15)
 
     val C1 = new DenseMatrix(4, 2, Array(1.0, 0.0, 2.0, 1.0, 0.0, 0.0, 1.0, 0.0))
     val C2 = C1.copy
@@ -179,7 +179,7 @@ class BLASSuite extends FunSuite {
 
     withClue("not supported") {
       intercept[Exception] {
-        sA times sB
+        sA multiply sB
       }
     }
 
@@ -188,9 +188,9 @@ class BLASSuite extends FunSuite {
     val sAT =
       new SparseMatrix(3, 4, Array(0, 1, 2, 3, 4), Array(1, 0, 1, 2), Array(2.0, 1.0, 1.0, 3.0))
 
-    assert(dAT transposeTimes B ~== expected absTol 1e-15)
-    assert(sAT transposeTimes B ~== expected absTol 1e-15)
-    assert(dAT transposeTimes sB ~== expected absTol 1e-15)
+    assert(dAT transposeMultiply B ~== expected absTol 1e-15)
+    assert(sAT transposeMultiply B ~== expected absTol 1e-15)
+    assert(dAT transposeMultiply sB ~== expected absTol 1e-15)
 
     gemm(true, false, 1.0, dAT, B, 2.0, C6)
     gemm(true, false, 1.0, sAT, B, 2.0, C7)
@@ -219,8 +219,8 @@ class BLASSuite extends FunSuite {
     val x = new DenseVector(Array(1.0, 2.0, 3.0))
     val expected = new DenseVector(Array(4.0, 1.0, 2.0, 9.0))
 
-    assert(dA times x ~== expected absTol 1e-15)
-    assert(sA times x ~== expected absTol 1e-15)
+    assert(dA multiply x ~== expected absTol 1e-15)
+    assert(sA multiply x ~== expected absTol 1e-15)
 
     val y1 = new DenseVector(Array(1.0, 3.0, 1.0, 0.0))
     val y2 = y1.copy
@@ -252,8 +252,8 @@ class BLASSuite extends FunSuite {
     val sAT =
       new SparseMatrix(3, 4, Array(0, 1, 2, 3, 4), Array(1, 0, 1, 2), Array(2.0, 1.0, 1.0, 3.0))
 
-    assert(dAT transposeTimes x ~== expected absTol 1e-15)
-    assert(sAT transposeTimes x ~== expected absTol 1e-15)
+    assert(dAT transposeMultiply x ~== expected absTol 1e-15)
+    assert(sAT transposeMultiply x ~== expected absTol 1e-15)
 
     gemv(true, 1.0, dAT, x, 2.0, y5)
     gemv(true, 1.0, sAT, x, 2.0, y6)

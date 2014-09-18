@@ -208,7 +208,7 @@ class MultiModelLogisticGradient extends MultiModelGradient {
 
   override def compute(data: Matrix, label: DenseMatrix,
                        weights: DenseMatrix): (DenseMatrix, Matrix) = {
-    val margin = data transposeTimes weights
+    val margin = data transposeMultiply weights
     val gradient = DenseMatrix.zeros(weights.numRows, weights.numCols)
 
     gemm(false, false, 1.0, data, sigmoid(margin).elementWiseOperateOnColumnsInPlace(_ - _, label),
@@ -236,7 +236,7 @@ class MultiModelLogisticGradient extends MultiModelGradient {
                        label: DenseMatrix,
                        weights: DenseMatrix,
                        cumGradient: DenseMatrix): Matrix = {
-    val margin = data transposeTimes weights
+    val margin = data transposeMultiply weights
     gemm(false, false, 1.0, data, sigmoid(margin).elementWiseOperateOnColumnsInPlace(_ - _, label),
       1.0, cumGradient)
 
@@ -269,7 +269,7 @@ class MultiModelLeastSquaresGradient extends MultiModelGradient {
   override def compute(data: Matrix, label: DenseMatrix,
                        weights: DenseMatrix): (DenseMatrix, Matrix) = {
 
-    val diff = (data transposeTimes weights).elementWiseOperateOnColumnsInPlace(_ - _, label)
+    val diff = (data transposeMultiply weights).elementWiseOperateOnColumnsInPlace(_ - _, label)
 
     val gradient = DenseMatrix.zeros(weights.numRows, weights.numCols)
 
@@ -293,7 +293,7 @@ class MultiModelLeastSquaresGradient extends MultiModelGradient {
                        label: DenseMatrix,
                        weights: DenseMatrix,
                        cumGradient: DenseMatrix): Matrix = {
-    val diff = (data transposeTimes weights).elementWiseOperateOnColumnsInPlace(_ - _, label)
+    val diff = (data transposeMultiply weights).elementWiseOperateOnColumnsInPlace(_ - _, label)
 
     gemm(false, false, 2.0, data, diff, 1.0, cumGradient)
     val loss = diff.update(v => v * v)
@@ -321,7 +321,7 @@ class MultiModelHingeGradient extends MultiModelGradient {
   override def compute(data: Matrix, label: DenseMatrix,
                        weights: DenseMatrix): (DenseMatrix, Matrix) = {
 
-    val dotProduct = data transposeTimes weights
+    val dotProduct = data transposeMultiply weights
     // Our loss function with {0, 1} labels is max(0, 1 - (2y – 1) (f_w(x)))
     // Therefore the gradient is -(2y - 1)*x
     val labelScaled = new DenseMatrix(1, label.numRows, label.map(_ * 2 - 1.0).values)
@@ -351,7 +351,7 @@ class MultiModelHingeGradient extends MultiModelGradient {
   override def compute(data: Matrix, label: DenseMatrix,
                        weights: DenseMatrix, cumGradient: DenseMatrix): Matrix = {
 
-    val dotProduct = data transposeTimes weights
+    val dotProduct = data transposeMultiply weights
     // Our loss function with {0, 1} labels is max(0, 1 - (2y – 1) (f_w(x)))
     // Therefore the gradient is -(2y - 1)*x
     val labelScaled = new DenseMatrix(1, label.numRows, label.map(_ * 2 - 1.0).values)

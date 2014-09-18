@@ -212,10 +212,8 @@ object BLAS extends Serializable with Logging {
 
   /**
    * C := alpha * A * B + beta * C
-   * @param transA specify whether to use matrix A, or the transpose of matrix A. Should be "N" or
-   *               "n" to use A, and "T" or "t" to use the transpose of A.
-   * @param transB specify whether to use matrix B, or the transpose of matrix B. Should be "N" or
-   *               "n" to use B, and "T" or "t" to use the transpose of B.
+   * @param transA whether to use the transpose of matrix A (true), or A itself (false).
+   * @param transB whether to use the transpose of matrix B (true), or B itself (false).
    * @param alpha a scalar to scale the multiplication A * B.
    * @param A the matrix A that will be left multiplied to B. Size of m x k.
    * @param B the matrix B that will be left multiplied by A. Size of k x n.
@@ -231,7 +229,7 @@ object BLAS extends Serializable with Logging {
       beta: Double,
       C: DenseMatrix): Unit = {
     if (alpha == 0.0) {
-      logWarning("gemm: alpha is equal to 0. Returning C.")
+      logDebug("gemm: alpha is equal to 0. Returning C.")
     } else {
       A match {
         case sparse: SparseMatrix =>
@@ -331,7 +329,7 @@ object BLAS extends Serializable with Logging {
     // Slicing is easy in this case. This is the optimal multiplication setting for sparse matrices
     if (transA){
       var colCounterForB = 0
-      if (!transB){ // Expensive to put the check inside the loop
+      if (!transB) { // Expensive to put the check inside the loop
         while (colCounterForB < nB) {
           var rowCounterForA = 0
           val Cstart = colCounterForB * mA
@@ -372,7 +370,7 @@ object BLAS extends Serializable with Logging {
     } else {
       // Scale matrix first if `beta` is not equal to 0.0
       if (beta != 0.0){
-        nativeBLAS.dscal(C.values.length, beta, C.values, 1)
+        f2jBLAS.dscal(C.values.length, beta, C.values, 1)
       }
       // Perform matrix multiplication and add to C. The rows of A are multiplied by the columns of
       // B, and added to C.
@@ -380,13 +378,14 @@ object BLAS extends Serializable with Logging {
       if (!transB) { // Expensive to put the check inside the loop
         while (colCounterForB < nB) {
           var colCounterForA = 0 // The column of A to multiply with the row of B
-          while (colCounterForA < kA){
+          val Bstart = colCounterForB * kB
+          val Cstart = colCounterForB * mA
+          while (colCounterForA < kA) {
             var i = Acols(colCounterForA)
             val indEnd = Acols(colCounterForA + 1)
-            val Bval = B(colCounterForA, colCounterForB)
-            val Cstart = colCounterForB * mA
+            val Bval = B.values(Bstart + colCounterForA) * alpha
             while (i < indEnd){
-              C.values(Cstart + Arows(i)) += Avals(i) * Bval * alpha
+              C.values(Cstart + Arows(i)) += Avals(i) * Bval
               i += 1
             }
             colCounterForA += 1
@@ -396,13 +395,13 @@ object BLAS extends Serializable with Logging {
       } else {
         while (colCounterForB < nB) {
           var colCounterForA = 0 // The column of A to multiply with the row of B
+          val Cstart = colCounterForB * mA
           while (colCounterForA < kA){
             var i = Acols(colCounterForA)
             val indEnd = Acols(colCounterForA + 1)
-            val Bval = B(colCounterForB, colCounterForA)
-            val Cstart = colCounterForB * mA
+            val Bval = B(colCounterForB, colCounterForA) * alpha
             while (i < indEnd){
-              C.values(Cstart + Arows(i)) += Avals(i) * Bval * alpha
+              C.values(Cstart + Arows(i)) += Avals(i) * Bval
               i += 1
             }
             colCounterForA += 1
@@ -527,8 +526,7 @@ object BLAS extends Serializable with Logging {
 
   /**
    * y := alpha * A * x + beta * y
-   * @param trans specify whether to use matrix A, or the transpose of matrix A. Should be "N" or
-   *               "n" to use A, and "T" or "t" to use the transpose of A.
+   * @param trans whether to use the transpose of matrix A (true), or A itself (false).
    * @param alpha a scalar to scale the multiplication A * x.
    * @param A the matrix A that will be left multiplied to x. Size of m x n.
    * @param x the vector x that will be left multiplied by A. Size of n x 1.
@@ -551,7 +549,7 @@ object BLAS extends Serializable with Logging {
     require(mA == y.size,
       s"The rows of A don't match the number of elements of y. A: $mA, y:${y.size}}")
     if (alpha == 0.0) {
-      logWarning("gemv: alpha is equal to 0. Returning y.")
+      logDebug("gemv: alpha is equal to 0. Returning y.")
     } else {
       A match {
         case sparse: SparseMatrix =>
@@ -581,47 +579,6 @@ object BLAS extends Serializable with Logging {
       y: DenseVector): Unit = {
     gemv(false, alpha, A, x, beta, y)
   }
-
-  /**
-   * y := alpha * A * x
-   *
-   * @param trans specify whether to use matrix A, or the transpose of matrix A. Should be "N" or
-   *               "n" to use A, and "T" or "t" to use the transpose of A.
-   * @param alpha a scalar to scale the multiplication A * x.
-   * @param A the matrix A that will be left multiplied to x. Size of m x n.
-   * @param x the vector x that will be left multiplied by A. Size of n x 1.
-   *
-   * @return `DenseVector` y, the result of the matrix-vector multiplication. Size of m x 1.
-   */
-  def gemv(
-            trans: Boolean,
-            alpha: Double,
-            A: Matrix,
-            x: DenseVector): DenseVector = {
-    val m = if(!trans) A.numRows else A.numCols
-
-    val y: DenseVector = new DenseVector(Array.fill(m)(0.0))
-    gemv(trans, alpha, A, x, 0.0, y)
-
-    y
-  }
-
-  /**
-   * y := alpha * A * x
-   *
-   * @param alpha a scalar to scale the multiplication A * x.
-   * @param A the matrix A that will be left multiplied to x. Size of m x n.
-   * @param x the vector x that will be left multiplied by A. Size of n x 1.
-   *
-   * @return `DenseVector` y, the result of the matrix-vector multiplication. Size of m x 1.
-   */
-  def gemv(
-      alpha: Double,
-      A: Matrix,
-      x: DenseVector): DenseVector = {
-    gemv(false, alpha, A, x)
-  }
-
 
   /**
    * y := alpha * A * x + beta * y
@@ -663,8 +620,9 @@ object BLAS extends Serializable with Logging {
       var rowCounter = 0
       while (rowCounter < mA){
         var i = Arows(rowCounter)
+        val indEnd = Arows(rowCounter + 1)
         var sum = 0.0
-        while(i < Arows(rowCounter + 1)){
+        while(i < indEnd){
           sum += Avals(i) * x.values(Acols(i))
           i += 1
         }
@@ -680,9 +638,11 @@ object BLAS extends Serializable with Logging {
       var colCounterForA = 0
       while (colCounterForA < nA){
         var i = Acols(colCounterForA)
-        while (i < Acols(colCounterForA + 1)){
+        val indEnd = Acols(colCounterForA + 1)
+        val xVal = x.values(colCounterForA) * alpha
+        while (i < indEnd){
           val rowIndex = Arows(i)
-          y.values(rowIndex) += Avals(i) * x.values(colCounterForA) * alpha
+          y.values(rowIndex) += Avals(i) * xVal
           i += 1
         }
         colCounterForA += 1

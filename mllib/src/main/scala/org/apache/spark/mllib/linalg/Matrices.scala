@@ -18,11 +18,13 @@
 package org.apache.spark.mllib.linalg
 
 import breeze.linalg.{Matrix => BM, DenseMatrix => BDM, CSCMatrix => BSM}
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.random.XORShiftRandom
 import org.apache.spark.util.Utils
 
-import scala.collection.mutable.{ArrayBuffer, PriorityQueue}
+import scala.collection.mutable.ArrayBuffer
+import java.util.Arrays
 
 /**
  * Trait for a local matrix.
@@ -41,9 +43,6 @@ sealed trait Matrix extends Serializable {
   /** Converts to a breeze matrix. */
   private[mllib] def toBreeze: BM[Double]
 
-  /** Gets the i-th element in the array backing the matrix. */
-  private[mllib] def apply(i: Int): Double
-
   /** Gets the (i, j)-th element. */
   private[mllib] def apply(i: Int, j: Int): Double
 
@@ -51,32 +50,40 @@ sealed trait Matrix extends Serializable {
   private[mllib] def index(i: Int, j: Int): Int
 
   /** Update element at (i, j) */
-  private[mllib] def update(i: Int, j: Int, v: Double)
+  private[mllib] def update(i: Int, j: Int, v: Double): Unit
 
   /** Get a deep copy of the matrix. */
   def copy: Matrix
 
   /** Convenience method for `Matrix`-`Matrix` multiplication.
     * Note: `SparseMatrix`-`SparseMatrix` multiplication is not supported */
-  def times(y: Matrix): DenseMatrix = {
-    val C: DenseMatrix = Matrices.zeros(numRows, y.numCols).asInstanceOf[DenseMatrix]
+  def multiply(y: Matrix): DenseMatrix = {
+    val C: DenseMatrix = DenseMatrix.zeros(numRows, y.numCols)
     BLAS.gemm(false, false, 1.0, this, y, 0.0, C)
     C
   }
 
   /** Convenience method for `Matrix`-`DenseVector` multiplication. */
-  def times(y: DenseVector): DenseVector = BLAS.gemv(1.0, this, y)
+  def multiply(y: DenseVector): DenseVector = {
+    val output = new DenseVector(new Array[Double](numRows))
+    BLAS.gemv(1.0, this, y, 0.0, output)
+    output
+  }
 
   /** Convenience method for `Matrix`^T^-`Matrix` multiplication.
     * Note: `SparseMatrix`-`SparseMatrix` multiplication is not supported */
-  def transposeTimes(y: Matrix): DenseMatrix = {
-    val C: DenseMatrix = Matrices.zeros(numCols, y.numCols).asInstanceOf[DenseMatrix]
+  def transposeMultiply(y: Matrix): DenseMatrix = {
+    val C: DenseMatrix = DenseMatrix.zeros(numCols, y.numCols)
     BLAS.gemm(true, false, 1.0, this, y, 0.0, C)
     C
   }
 
   /** Convenience method for `Matrix`^T^-`DenseVector` multiplication. */
-  def transposeTimes(y: DenseVector): DenseVector = BLAS.gemv(true, 1.0, this, y)
+  def transposeMultiply(y: DenseVector): DenseVector = {
+    val output = new DenseVector(new Array[Double](numCols))
+    BLAS.gemv(true, 1.0, this, y, 0.0, output)
+    output
+  }
 
   /** A human readable representation of the matrix */
   override def toString: String = toBreeze.toString()
@@ -258,7 +265,7 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
 
   private[mllib] def index(i: Int, j: Int): Int = i + numRows * j
 
-  private[mllib] def update(i: Int, j: Int, v: Double){
+  private[mllib] def update(i: Int, j: Int, v: Double): Unit = {
     values(index(i, j)) = v
   }
 
@@ -429,8 +436,8 @@ class DenseMatrix(val numRows: Int, val numCols: Int, val values: Array[Double])
     copy.compareInPlace(v, f)
   }
 
-  private[mllib] def timesInPlace(y: Matrix): DenseMatrix = {
-    val copy = this times y
+  private[mllib] def multiplyInPlace(y: Matrix): DenseMatrix = {
+    val copy = this multiply y
     BLAS.copy(Vectors.dense(copy.values), Vectors.dense(values))
     this
   }
@@ -527,7 +534,8 @@ object DenseMatrix {
  * @param numRows number of rows
  * @param numCols number of columns
  * @param colPtrs the index corresponding to the start of a new column
- * @param rowIndices the row index of the entry
+ * @param rowIndices the row index of the entry. They must be in strictly increasing order for each
+ *                   column
  * @param values non-zero matrix entries in column major
  */
 class SparseMatrix(
@@ -544,7 +552,7 @@ class SparseMatrix(
     s"numCols: $numCols")
 
   override def toArray: Array[Double] = {
-    val arr = Array.fill(numRows * numCols)(0.0)
+    val arr = new Array[Double](numRows * numCols)
     var j = 0
     while (j < numCols) {
       var i = colPtrs(j)
@@ -563,36 +571,19 @@ class SparseMatrix(
   private[mllib] def toBreeze: BM[Double] =
     new BSM[Double](values, numRows, numCols, colPtrs, rowIndices)
 
-  private[mllib] def apply(i: Int): Double = values(i)
-
   private[mllib] def apply(i: Int, j: Int): Double = {
     val ind = index(i, j)
-    if (ind == -1) 0.0 else values(ind)
+    if (ind < 0) 0.0 else values(ind)
   }
 
   private[mllib] def index(i: Int, j: Int): Int = {
-    if (colPtrs.last == 0) return -1 // Matrix full of zeros
-    var regionStart = colPtrs(j)
-    var regionEnd = colPtrs(j + 1)
-    while (regionStart <= regionEnd) {
-      val mid = (regionStart + regionEnd) / 2
-      if (rowIndices(mid) == i){
-        return mid
-      } else if (regionStart == regionEnd) {
-        return -1
-      } else if (rowIndices(mid) > i) {
-        regionEnd = mid
-      } else {
-        regionStart = mid
-      }
-    }
-    -1
+    Arrays.binarySearch(rowIndices, colPtrs(j), colPtrs(j + 1), i)
   }
 
-  private[mllib] def update(i: Int, j: Int, v: Double){
+  private[mllib] def update(i: Int, j: Int, v: Double): Unit = {
     val ind = index(i, j)
     if (ind == -1){
-      throw new IllegalArgumentException("The given row and column indices correspond to a zero " +
+      throw new NoSuchElementException("The given row and column indices correspond to a zero " +
         "value. Only non-zero elements in Sparse Matrices can be updated.")
     } else {
       values(index(i, j)) = v
@@ -985,17 +976,17 @@ object Matrices {
    *
    * @param numRows number of rows
    * @param numCols number of columns
-   * @param colPointers the index corresponding to the start of a new column
+   * @param colPtrs the index corresponding to the start of a new column
    * @param rowIndices the row index of the entry
    * @param values non-zero matrix entries in column major
    */
   def sparse(
      numRows: Int,
      numCols: Int,
-     colPointers: Array[Int],
+     colPtrs: Array[Int],
      rowIndices: Array[Int],
      values: Array[Double]): Matrix = {
-    new SparseMatrix(numRows, numCols, colPointers, rowIndices, values)
+    new SparseMatrix(numRows, numCols, colPtrs, rowIndices, values)
   }
 
   /**

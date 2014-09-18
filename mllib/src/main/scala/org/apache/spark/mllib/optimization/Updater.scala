@@ -263,7 +263,7 @@ class MultiModelL1Updater extends MultiModelUpdater {
       j += 1
     }
 
-    (weightsOld, weightsOld.colNorms(1.0) timesInPlace regParam)
+    (weightsOld, weightsOld.colNorms(1.0) multiplyInPlace regParam)
   }
 }
 /**
@@ -287,14 +287,14 @@ class MultiModelSquaredL2Updater extends MultiModelUpdater {
     val thisIterStepSize =
       SparseMatrix.diag(Vectors.dense(stepSize.map(-_ / sqrt(iter)).toArray))
 
-    weightsOld timesInPlace thisIterStepSize.elementWiseOperate(_ * _, regParam).
+    weightsOld multiplyInPlace thisIterStepSize.elementWiseOperate(_ * _, regParam).
       elementWiseOperateInPlace(_ + _, Matrices.speye(thisIterStepSize.numRows))
 
     gemm(1.0, gradient,thisIterStepSize, 1.0, weightsOld)
 
     val norm = weightsOld.colNorms(2.0)
 
-    (weightsOld, (norm.elementWiseOperate(_ * _, norm) timesInPlace regParam).
+    (weightsOld, (norm.elementWiseOperate(_ * _, norm) multiplyInPlace regParam).
       elementWiseOperateScalarInPlace(_ * _, 0.5))
   }
 }
