@@ -24,7 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalog.v2.{CatalogNotFoundException, CatalogPlugin, LookupCatalog, TableChange}
+import org.apache.spark.sql.catalog.v2._
 import org.apache.spark.sql.catalyst._
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.encoders.OuterScopes
@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.expressions.objects._
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.catalyst.plans.logical.sql.{AlterTableAddColumnsStatement, AlterTableAlterColumnStatement, AlterTableDropColumnsStatement, AlterTableRenameColumnStatement, AlterTableSetLocationStatement, AlterTableSetPropertiesStatement, AlterTableUnsetPropertiesStatement}
+import org.apache.spark.sql.catalyst.plans.logical.sql._
 import org.apache.spark.sql.catalyst.rules._
 import org.apache.spark.sql.catalyst.trees.TreeNodeRef
 import org.apache.spark.sql.catalyst.util.toPrettySQL
@@ -643,7 +643,9 @@ class Analyzer(
           if catalog.isTemporaryTable(ident) =>
         u // temporary views take precedence over catalog table names
 
-      case u @ UnresolvedRelation(CatalogObjectIdentifier(Some(catalogPlugin), ident)) =>
+      case u @ UnresolvedRelation(CatalogObjectIdentifier(maybeCatalog, ident)) =>
+        val catalogPlugin = maybeCatalog.orElse(sessionCatalog).getOrElse(
+          throw new IllegalStateException())
         loadTable(catalogPlugin, ident).map(DataSourceV2Relation.create).getOrElse(u)
     }
   }
@@ -767,20 +769,23 @@ class Analyzer(
    */
   object ResolveAlterTable extends Rule[LogicalPlan] {
     import org.apache.spark.sql.catalog.v2.CatalogV2Implicits._
+
+    private def getSessionCatalog: CatalogPlugin = sessionCatalog.getOrElse(
+      throw new IllegalStateException("Session catalog not defined"))
     override def apply(plan: LogicalPlan): LogicalPlan = plan resolveOperators {
       case alter @ AlterTableAddColumnsStatement(
-          CatalogObjectIdentifier(Some(v2Catalog), ident), cols) =>
+          CatalogObjectIdentifier(maybeCatalog, ident), cols) =>
         val changes = cols.map { col =>
           TableChange.addColumn(col.name.toArray, col.dataType, true, col.comment.orNull)
         }
 
         AlterTable(
-          v2Catalog.asTableCatalog, ident,
+          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
           UnresolvedRelation(alter.tableName),
           changes)
 
       case alter @ AlterTableAlterColumnStatement(
-          CatalogObjectIdentifier(Some(v2Catalog), ident), colName, dataType, comment) =>
+          CatalogObjectIdentifier(maybeCatalog, ident), colName, dataType, comment) =>
         val typeChange = dataType.map { newDataType =>
           TableChange.updateColumnType(colName.toArray, newDataType, true)
         }
@@ -790,48 +795,48 @@ class Analyzer(
         }
 
         AlterTable(
-          v2Catalog.asTableCatalog, ident,
+          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
           UnresolvedRelation(alter.tableName),
           typeChange.toSeq ++ commentChange.toSeq)
 
       case alter @ AlterTableRenameColumnStatement(
-          CatalogObjectIdentifier(Some(v2Catalog), ident), col, newName) =>
+          CatalogObjectIdentifier(maybeCatalog, ident), col, newName) =>
         AlterTable(
-          v2Catalog.asTableCatalog, ident,
+          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
           UnresolvedRelation(alter.tableName),
           Seq(TableChange.renameColumn(col.toArray, newName)))
 
       case alter @ AlterTableDropColumnsStatement(
-          CatalogObjectIdentifier(Some(v2Catalog), ident), cols) =>
+          CatalogObjectIdentifier(maybeCatalog, ident), cols) =>
         val changes = cols.map(col => TableChange.deleteColumn(col.toArray))
         AlterTable(
-          v2Catalog.asTableCatalog, ident,
+          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
           UnresolvedRelation(alter.tableName),
           changes)
 
       case alter @ AlterTableSetPropertiesStatement(
-          CatalogObjectIdentifier(Some(v2Catalog), ident), props) =>
+          CatalogObjectIdentifier(maybeCatalog, ident), props) =>
         val changes = props.map {
           case (key, value) =>
             TableChange.setProperty(key, value)
         }
 
         AlterTable(
-          v2Catalog.asTableCatalog, ident,
+          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
           UnresolvedRelation(alter.tableName),
           changes.toSeq)
 
       case alter @ AlterTableUnsetPropertiesStatement(
-          CatalogObjectIdentifier(Some(v2Catalog), ident), keys, _) =>
+          CatalogObjectIdentifier(maybeCatalog, ident), keys, _) =>
         AlterTable(
-          v2Catalog.asTableCatalog, ident,
+          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
           UnresolvedRelation(alter.tableName),
           keys.map(key => TableChange.removeProperty(key)))
 
       case alter @ AlterTableSetLocationStatement(
-          CatalogObjectIdentifier(Some(v2Catalog), ident), newLoc) =>
+          CatalogObjectIdentifier(maybeCatalog, ident), newLoc) =>
         AlterTable(
-          v2Catalog.asTableCatalog, ident,
+          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
           UnresolvedRelation(alter.tableName),
           Seq(TableChange.setProperty("location", newLoc)))
     }
