@@ -124,7 +124,7 @@ case class DataSourceResolution(
       AlterTableSetLocationCommand(table, None, newLocation)
 
     case AlterTableAddColumnsStatement(AsTableIdentifier(table), newColumns)
-      if newColumns.forall(_.name.size == 1) =>
+        if newColumns.forall(_.name.size == 1) =>
       // only top-level adds are supported using AlterTableAddColumnsCommand
       AlterTableAddColumnsCommand(table, newColumns.map(convertToStructField))
 
