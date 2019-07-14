@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.catalog.v2.{CatalogPlugin, Identifier, TableChange}
 import org.apache.spark.sql.catalog.v2.TableChange.{AddColumn, DeleteColumn, RemoveProperty, RenameColumn, SetProperty, UpdateColumnComment, UpdateColumnType}
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogUtils}
 import org.apache.spark.sql.sources.v2.Table
 import org.apache.spark.sql.types.{ArrayType, MapType, StructField, StructType}
 
@@ -38,6 +39,19 @@ object CatalogV2Util {
       properties: Map[String, String],
       changes: Seq[TableChange]): Map[String, String] = {
     applyPropertiesChanges(properties.asJava, changes).asScala.toMap
+  }
+
+  /**
+   * Apply properties changes to a map and return the result.
+   */
+  def applyStorageChanges(
+      storage: CatalogStorageFormat,
+      changes: Seq[TableChange]): CatalogStorageFormat = {
+    changes.foldLeft(storage) {
+      case (newStorage, change: SetProperty) if change.property() == "location" =>
+        newStorage.copy(locationUri = Some(CatalogUtils.stringToURI(change.value())))
+      case (newStorage, _) => newStorage
+    }
   }
 
   /**

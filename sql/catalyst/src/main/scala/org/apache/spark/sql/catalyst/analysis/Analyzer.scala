@@ -166,7 +166,6 @@ class Analyzer(
       new SubstituteUnresolvedOrdinals(conf)),
     Batch("Resolution", fixedPoint,
       ResolveTableValuedFunctions ::
-      ResolveAlterTable ::
       ResolveTables ::
       ResolveRelations ::
       ResolveReferences ::
@@ -643,9 +642,7 @@ class Analyzer(
           if catalog.isTemporaryTable(ident) =>
         u // temporary views take precedence over catalog table names
 
-      case u @ UnresolvedRelation(CatalogObjectIdentifier(maybeCatalog, ident)) =>
-        val catalogPlugin = maybeCatalog.orElse(sessionCatalog).getOrElse(
-          throw new IllegalStateException())
+      case u @ UnresolvedRelation(CatalogObjectIdentifier(Some(catalogPlugin), ident)) =>
         loadTable(catalogPlugin, ident).map(DataSourceV2Relation.create).getOrElse(u)
     }
   }
@@ -756,89 +753,6 @@ class Analyzer(
     private def isRunningDirectlyOnFiles(table: TableIdentifier): Boolean = {
       table.database.isDefined && conf.runSQLonFile && !catalog.isTemporaryTable(table) &&
         (!catalog.databaseExists(table.database.get) || !catalog.tableExists(table))
-    }
-  }
-
-  /**
-   * Resolve ALTER TABLE statements that use a DSv2 catalog.
-   *
-   * This rule converts unresolved ALTER TABLE statements to v2 when a v2 catalog is responsible
-   * for the table identifier. A v2 catalog is responsible for an identifier when the identifier
-   * has a catalog specified, like prod_catalog.db.table, or when a default v2 catalog is set and
-   * the table identifier does not include a catalog.
-   */
-  object ResolveAlterTable extends Rule[LogicalPlan] {
-    import org.apache.spark.sql.catalog.v2.CatalogV2Implicits._
-
-    private def getSessionCatalog: CatalogPlugin = sessionCatalog.getOrElse(
-      throw new IllegalStateException("Session catalog not defined"))
-    override def apply(plan: LogicalPlan): LogicalPlan = plan resolveOperators {
-      case alter @ AlterTableAddColumnsStatement(
-          CatalogObjectIdentifier(maybeCatalog, ident), cols) =>
-        val changes = cols.map { col =>
-          TableChange.addColumn(col.name.toArray, col.dataType, true, col.comment.orNull)
-        }
-
-        AlterTable(
-          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
-          UnresolvedRelation(alter.tableName),
-          changes)
-
-      case alter @ AlterTableAlterColumnStatement(
-          CatalogObjectIdentifier(maybeCatalog, ident), colName, dataType, comment) =>
-        val typeChange = dataType.map { newDataType =>
-          TableChange.updateColumnType(colName.toArray, newDataType, true)
-        }
-
-        val commentChange = comment.map { newComment =>
-          TableChange.updateColumnComment(colName.toArray, newComment)
-        }
-
-        AlterTable(
-          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
-          UnresolvedRelation(alter.tableName),
-          typeChange.toSeq ++ commentChange.toSeq)
-
-      case alter @ AlterTableRenameColumnStatement(
-          CatalogObjectIdentifier(maybeCatalog, ident), col, newName) =>
-        AlterTable(
-          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
-          UnresolvedRelation(alter.tableName),
-          Seq(TableChange.renameColumn(col.toArray, newName)))
-
-      case alter @ AlterTableDropColumnsStatement(
-          CatalogObjectIdentifier(maybeCatalog, ident), cols) =>
-        val changes = cols.map(col => TableChange.deleteColumn(col.toArray))
-        AlterTable(
-          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
-          UnresolvedRelation(alter.tableName),
-          changes)
-
-      case alter @ AlterTableSetPropertiesStatement(
-          CatalogObjectIdentifier(maybeCatalog, ident), props) =>
-        val changes = props.map {
-          case (key, value) =>
-            TableChange.setProperty(key, value)
-        }
-
-        AlterTable(
-          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
-          UnresolvedRelation(alter.tableName),
-          changes.toSeq)
-
-      case alter @ AlterTableUnsetPropertiesStatement(
-          CatalogObjectIdentifier(maybeCatalog, ident), keys, _) =>
-        AlterTable(
-          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
-          UnresolvedRelation(alter.tableName),
-          keys.map(key => TableChange.removeProperty(key)))
-
-      case alter @ AlterTableSetLocationStatement(
-          CatalogObjectIdentifier(maybeCatalog, ident), newLoc) =>
-        AlterTable(
-          maybeCatalog.getOrElse(getSessionCatalog).asTableCatalog, ident,
-          UnresolvedRelation(alter.tableName),
-          Seq(TableChange.setProperty("location", newLoc)))
     }
   }
 

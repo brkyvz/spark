@@ -125,13 +125,23 @@ class V2SessionCatalog(sessionState: SessionState) extends TableCatalog {
 
     val properties = CatalogV2Util.applyPropertiesChanges(catalogTable.properties, changes)
     val schema = CatalogV2Util.applySchemaChanges(catalogTable.schema, changes)
+    val storage = CatalogV2Util.applyStorageChanges(catalogTable.storage, changes)
+
+    val hiveCompatibleSchema = StructType(schema.filter(f =>
+      !catalogTable.partitionColumnNames.contains(f.name)) ++
+      schema.filter(f => catalogTable.partitionColumnNames.contains(f.name))
+    )
 
     try {
-      catalog.alterTable(catalogTable.copy(properties = properties, schema = schema))
+      catalog.alterTable(catalogTable.copy(
+        storage = storage,
+        properties = properties,
+        schema = hiveCompatibleSchema))
     } catch {
       case _: NoSuchTableException =>
         throw new NoSuchTableException(ident)
     }
+    catalog.refreshTable(ident.asTableIdentifier)
 
     loadTable(ident)
   }
