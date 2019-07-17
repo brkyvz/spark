@@ -27,10 +27,10 @@ import org.apache.spark.sql.catalog.v2.expressions.Transform
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.CastSupport
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, UnresolvedCatalogRelation}
-import org.apache.spark.sql.catalyst.plans.logical.{CreateTableAsSelect, CreateV2Table, DropTable, LogicalPlan}
-import org.apache.spark.sql.catalyst.plans.logical.sql.{AlterTableAddColumnsStatement, AlterTableSetLocationStatement, AlterTableSetPropertiesStatement, AlterTableUnsetPropertiesStatement, AlterViewSetPropertiesStatement, AlterViewUnsetPropertiesStatement, CreateTableAsSelectStatement, CreateTableStatement, DropTableStatement, DropViewStatement, QualifiedColType}
+import org.apache.spark.sql.catalyst.plans.logical.{CreateTableAsSelect, CreateV2Table, DescribeTable, DropTable, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.sql.{AlterTableAddColumnsStatement, AlterTableSetLocationStatement, AlterTableSetPropertiesStatement, AlterTableUnsetPropertiesStatement, AlterViewSetPropertiesStatement, AlterViewUnsetPropertiesStatement, CreateTableAsSelectStatement, CreateTableStatement, DescribeColumnStatement, DescribeTableStatement, DropTableStatement, DropViewStatement, QualifiedColType}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.command.{AlterTableAddColumnsCommand, AlterTableSetLocationCommand, AlterTableSetPropertiesCommand, AlterTableUnsetPropertiesCommand, DropTableCommand}
+import org.apache.spark.sql.execution.command.{AlterTableAddColumnsCommand, AlterTableSetLocationCommand, AlterTableSetPropertiesCommand, AlterTableUnsetPropertiesCommand, DescribeColumnCommand, DescribeTableCommand, DropTableCommand}
 import org.apache.spark.sql.execution.datasources.v2.{CatalogTableAsV2, DataSourceV2Relation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.v2.TableProvider
@@ -93,6 +93,25 @@ case class DataSourceResolution(
           // use the v2 session catalog, which delegates to the global v1 session catalog
           convertCTAS(v2SessionCatalog.asTableCatalog, identifier, create)
       }
+
+    case DescribeColumnStatement(
+        AsTableIdentifier(tableName), colName, isExtended) =>
+      DescribeColumnCommand(tableName, colName, isExtended)
+
+    case DescribeColumnStatement(
+        CatalogObjectIdentifier(Some(catalog), ident), colName, isExtended) =>
+      throw new AnalysisException("Describing columns is not supported for v2 tables.")
+
+    case DescribeTableStatement(
+        AsTableIdentifier(tableName), partitionSpec, isExtended) =>
+      DescribeTableCommand(tableName, partitionSpec, isExtended)
+
+    case DescribeTableStatement(
+        CatalogObjectIdentifier(Some(catalog), ident), partitionSpec, isExtended) =>
+      if (partitionSpec.nonEmpty) {
+        throw new AnalysisException("DESCRIBE TABLE... PARTITION is not supported for v2 tables.")
+      }
+      DescribeTable(catalog.asTableCatalog, ident, isExtended)
 
     case DropTableStatement(CatalogObjectIdentifier(Some(catalog), ident), ifExists, _) =>
       DropTable(catalog.asTableCatalog, ident, ifExists)

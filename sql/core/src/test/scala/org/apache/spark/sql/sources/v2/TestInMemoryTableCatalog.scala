@@ -71,12 +71,7 @@ class TestInMemoryTableCatalog extends TableCatalog {
       throw new TableAlreadyExistsException(ident)
     }
 
-    if (partitions.nonEmpty) {
-      throw new UnsupportedOperationException(
-        s"Catalog $name: Partitioned tables are not supported")
-    }
-
-    val table = new InMemoryTable(s"$name.${ident.quoted}", schema, properties)
+    val table = new InMemoryTable(s"$name.${ident.quoted}", schema, properties, partitions)
 
     tables.put(ident, table)
 
@@ -88,6 +83,7 @@ class TestInMemoryTableCatalog extends TableCatalog {
       case Some(table) =>
         val properties = CatalogV2Util.applyPropertiesChanges(table.properties, changes)
         val schema = CatalogV2Util.applySchemaChanges(table.schema, changes)
+<<<<<<< HEAD
 
         // fail if the last column in the schema was dropped
         if (schema.fields.isEmpty) {
@@ -95,6 +91,10 @@ class TestInMemoryTableCatalog extends TableCatalog {
         }
 
         val newTable = new InMemoryTable(table.name, schema, properties, table.data)
+=======
+        val newTable = new InMemoryTable(
+            table.name, schema, properties, table.partitioning, table.data)
+>>>>>>> a9470068615bc9d575c1bf009df3a7833502f1b6
 
         tables.put(ident, newTable)
 
@@ -117,15 +117,17 @@ class TestInMemoryTableCatalog extends TableCatalog {
 private class InMemoryTable(
     val name: String,
     val schema: StructType,
-    override val properties: util.Map[String, String])
+    override val properties: util.Map[String, String],
+    override val partitioning: Array[Transform])
   extends Table with SupportsRead with SupportsWrite {
 
   def this(
       name: String,
       schema: StructType,
       properties: util.Map[String, String],
+      partitioning: Array[Transform],
       data: Array[BufferedRows]) = {
-    this(name, schema, properties)
+    this(name, schema, properties, partitioning)
     replaceData(data)
   }
 

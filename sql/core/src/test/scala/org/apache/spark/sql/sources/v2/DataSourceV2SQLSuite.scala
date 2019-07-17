@@ -21,15 +21,23 @@ import scala.collection.JavaConverters._
 
 import org.scalatest.BeforeAndAfter
 
+<<<<<<< HEAD
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, QueryTest}
+=======
+import org.apache.spark.sql.{QueryTest, Row}
+>>>>>>> a9470068615bc9d575c1bf009df3a7833502f1b6
 import org.apache.spark.sql.catalog.v2.Identifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, TableAlreadyExistsException}
 import org.apache.spark.sql.execution.datasources.v2.V2SessionCatalog
 import org.apache.spark.sql.execution.datasources.v2.orc.OrcDataSourceV2
 import org.apache.spark.sql.internal.SQLConf.V2_SESSION_CATALOG
 import org.apache.spark.sql.test.SharedSQLContext
+<<<<<<< HEAD
 import org.apache.spark.sql.types.{ArrayType, DoubleType, IntegerType, LongType, MapType, StringType, StructField, StructType, TimestampType}
+=======
+import org.apache.spark.sql.types.{LongType, StringType, StructField, StructType}
+>>>>>>> a9470068615bc9d575c1bf009df3a7833502f1b6
 
 class DataSourceV2SQLSuite extends QueryTest with SharedSQLContext with BeforeAndAfter {
 
@@ -66,6 +74,50 @@ class DataSourceV2SQLSuite extends QueryTest with SharedSQLContext with BeforeAn
 
     val rdd = spark.sparkContext.parallelize(table.asInstanceOf[InMemoryTable].rows)
     checkAnswer(spark.internalCreateDataFrame(rdd, table.schema), Seq.empty)
+  }
+
+  test("DescribeTable using v2 catalog") {
+    spark.sql("CREATE TABLE testcat.table_name (id bigint, data string)" +
+      " USING foo" +
+      " PARTITIONED BY (id)")
+    val descriptionDf = spark.sql("DESCRIBE TABLE testcat.table_name")
+    assert(descriptionDf.schema === StructType(
+      Seq(
+        StructField("col_name", StringType, nullable = false),
+        StructField("data_type", StringType, nullable = false),
+        StructField("comment", StringType))))
+    val description = descriptionDf.collect()
+    assert(description === Seq(
+      Row("id", "bigint", ""),
+      Row("data", "string", "")))
+  }
+
+  test("DescribeTable extended using v2 catalog") {
+    spark.sql("CREATE TABLE testcat.table_name (id bigint, data string)" +
+      " USING foo" +
+      " PARTITIONED BY (id)" +
+      " TBLPROPERTIES ('bar'='baz')")
+    val descriptionDf = spark.sql("DESCRIBE TABLE EXTENDED testcat.table_name")
+    assert(descriptionDf.schema === StructType(
+      Seq(
+        StructField("col_name", StringType, nullable = false),
+        StructField("data_type", StringType, nullable = false),
+        StructField("comment", StringType))))
+    assert(descriptionDf.collect()
+      .map(_.toSeq)
+      .map(_.toArray.map(_.toString.trim)) === Array(
+      Array("id", "bigint", ""),
+      Array("data", "string", ""),
+      Array("", "", ""),
+      Array("Partitioning", "", ""),
+      Array("--------------", "", ""),
+      Array("Part 0", "id", ""),
+      Array("", "", ""),
+      Array("Table Property", "Value", ""),
+      Array("----------------", "-------", ""),
+      Array("bar", "baz", ""),
+      Array("provider", "foo", "")))
+
   }
 
   test("CreateTable: use v2 plan and session catalog when provider is v2") {
