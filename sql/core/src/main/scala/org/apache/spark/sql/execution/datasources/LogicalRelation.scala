@@ -16,8 +16,8 @@
  */
 package org.apache.spark.sql.execution.datasources
 
-import org.apache.spark.sql.catalyst.analysis.MultiInstanceRelation
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.analysis.{MultiInstanceRelation, NamedRelation}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.{AttributeMap, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, Statistics}
@@ -74,4 +74,15 @@ object LogicalRelation {
 
   def apply(relation: BaseRelation, table: CatalogTable): LogicalRelation =
     LogicalRelation(relation, relation.schema.toAttributes, Some(table), false)
+}
+
+class NamedLogicalRelation(
+    override val relation: BaseRelation,
+    table: CatalogTable)
+  extends LogicalRelation(relation, relation.schema.toAttributes, Some(table), false)
+  with NamedRelation {
+
+  require(table.tableType != CatalogTableType.VIEW, "A named Logical Relation cannot be a view")
+
+  override def name: String = table.identifier.identifier
 }

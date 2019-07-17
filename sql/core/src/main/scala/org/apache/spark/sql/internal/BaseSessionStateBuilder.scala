@@ -170,6 +170,7 @@ abstract class BaseSessionStateBuilder(
       new FindDataSourceTable(session) +:
         new ResolveSQLOnFile(session) +:
         new FallBackFileSourceV2(session) +:
+        new DDLV2Resolution(conf, this) +:
         DataSourceResolution(conf, this) +:
         customResolutionRules
 

@@ -236,7 +236,7 @@ class FindDataSourceTable(sparkSession: SparkSession) extends Rule[LogicalPlan] 
           className = table.provider.get,
           options = table.storage.properties ++ pathOption,
           catalogTable = Some(table))
-      LogicalRelation(dataSource.resolveRelation(checkFilesExist = false), table)
+      new NamedLogicalRelation(dataSource.resolveRelation(checkFilesExist = false), table)
     })
   }
 
