@@ -69,18 +69,14 @@ class TestInMemoryTableCatalog extends TableCatalog {
     if (tables.containsKey(ident)) {
       throw new TableAlreadyExistsException(ident)
     }
-<<<<<<< HEAD
 
     val table = new InMemoryTable(s"$name.${ident.quoted}", schema, properties, partitions)
-=======
+
     TestInMemoryTableCatalog.maybeSimulateFailedTableCreation(properties)
     if (partitions.nonEmpty) {
       throw new UnsupportedOperationException(
         s"Catalog $name: Partitioned tables are not supported")
     }
-
-    val table = new InMemoryTable(s"$name.${ident.quoted}", schema, properties)
->>>>>>> 581dba2822a8c1d23f9da653e8c26c84b18cfa3e
 
     tables.put(ident, table)
 
@@ -92,18 +88,14 @@ class TestInMemoryTableCatalog extends TableCatalog {
       case Some(table) =>
         val properties = CatalogV2Util.applyPropertiesChanges(table.properties, changes)
         val schema = CatalogV2Util.applySchemaChanges(table.schema, changes)
-<<<<<<< HEAD
 
         // fail if the last column in the schema was dropped
         if (schema.fields.isEmpty) {
           throw new IllegalArgumentException(s"Cannot drop all fields")
         }
 
-        val newTable = new InMemoryTable(table.name, schema, properties, table.data)
-=======
         val newTable = new InMemoryTable(
             table.name, schema, properties, table.partitioning, table.data)
->>>>>>> a9470068615bc9d575c1bf009df3a7833502f1b6
 
         tables.put(ident, newTable)
 

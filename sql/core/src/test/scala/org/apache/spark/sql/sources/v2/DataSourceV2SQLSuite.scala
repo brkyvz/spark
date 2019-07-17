@@ -18,7 +18,7 @@
 package org.apache.spark.sql.sources.v2
 
 import scala.collection.JavaConverters._
-
+/*
 import org.scalatest.BeforeAndAfter
 
 <<<<<<< HEAD
@@ -1391,3 +1391,4 @@ class DataSourceV2SQLSuite extends QueryTest with SharedSQLContext with BeforeAn
     }
   }
 }
+*/
