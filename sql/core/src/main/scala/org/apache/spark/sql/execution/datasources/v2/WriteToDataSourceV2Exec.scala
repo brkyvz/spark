@@ -26,6 +26,7 @@ import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.executor.CommitDeniedException
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{Dataset, SaveMode}
 import org.apache.spark.sql.catalog.v2.{Identifier, StagingTableCatalog, TableCatalog}
 import org.apache.spark.sql.catalog.v2.expressions.Transform
 import org.apache.spark.sql.catalyst.InternalRow
@@ -33,8 +34,8 @@ import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableExceptio
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
-import org.apache.spark.sql.sources.{AlwaysTrue, Filter}
-import org.apache.spark.sql.sources.v2.{StagedTable, SupportsWrite}
+import org.apache.spark.sql.sources.{AlwaysTrue, CreatableRelationProvider, Filter}
+import org.apache.spark.sql.sources.v2.{StagedTable, SupportsWrite, TableProvider}
 import org.apache.spark.sql.sources.v2.writer.{BatchWrite, DataWriterFactory, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, WriteBuilder, WriterCommitMessage}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.{LongAccumulator, Utils}
@@ -63,6 +64,7 @@ case class CreateTableAsSelectExec(
     catalog: TableCatalog,
     ident: Identifier,
     partitioning: Seq[Transform],
+    logicalPlan: LogicalPlan,
     query: SparkPlan,
     properties: Map[String, String],
     writeOptions: CaseInsensitiveStringMap,
@@ -90,6 +92,16 @@ case class CreateTableAsSelectExec(
 
           doWrite(batchWrite)
 
+        case v1Provider: V1RelationProvider
+            if classOf[CreatableRelationProvider].isAssignableFrom(v1Provider.relation.getClass) =>
+          v1Provider.relation.asInstanceOf[CreatableRelationProvider].createRelation(
+            sqlContext,
+            SaveMode.Overwrite,
+            writeOptions.asCaseSensitiveMap().asScala.toMap,
+            Dataset.ofRows(sqlContext.sparkSession, logicalPlan)
+          )
+          sparkContext.emptyRDD[InternalRow]
+
         case _ =>
           // table does not support writes
           throw new SparkException(
@@ -114,6 +126,7 @@ case class AtomicCreateTableAsSelectExec(
     catalog: StagingTableCatalog,
     ident: Identifier,
     partitioning: Seq[Transform],
+    logicalPlan: LogicalPlan,
     query: SparkPlan,
     properties: Map[String, String],
     writeOptions: CaseInsensitiveStringMap,
@@ -129,7 +142,7 @@ case class AtomicCreateTableAsSelectExec(
     }
     val stagedTable = catalog.stageCreate(
       ident, query.schema, partitioning.toArray, properties.asJava)
-    writeToStagedTable(stagedTable, writeOptions, ident)
+    writeToStagedTable(stagedTable, logicalPlan, writeOptions, ident)
   }
 }
 
@@ -147,6 +160,7 @@ case class ReplaceTableAsSelectExec(
     catalog: TableCatalog,
     ident: Identifier,
     partitioning: Seq[Transform],
+    logicalPlan: LogicalPlan,
     query: SparkPlan,
     properties: Map[String, String],
     writeOptions: CaseInsensitiveStringMap,
@@ -180,6 +194,16 @@ case class ReplaceTableAsSelectExec(
 
           doWrite(batchWrite)
 
+        case v1Provider: V1RelationProvider
+            if classOf[CreatableRelationProvider].isAssignableFrom(v1Provider.relation.getClass) =>
+          v1Provider.relation.asInstanceOf[CreatableRelationProvider].createRelation(
+            sqlContext,
+            SaveMode.Overwrite,
+            writeOptions.asCaseSensitiveMap().asScala.toMap,
+            Dataset.ofRows(sqlContext.sparkSession, logicalPlan)
+          )
+          sparkContext.emptyRDD[InternalRow]
+
         case _ =>
           // table does not support writes
           throw new SparkException(
@@ -207,6 +231,7 @@ case class AtomicReplaceTableAsSelectExec(
     catalog: StagingTableCatalog,
     ident: Identifier,
     partitioning: Seq[Transform],
+    logicalPlan: LogicalPlan,
     query: SparkPlan,
     properties: Map[String, String],
     writeOptions: CaseInsensitiveStringMap,
@@ -222,7 +247,7 @@ case class AtomicReplaceTableAsSelectExec(
     } else {
       throw new CannotReplaceMissingTableException(ident)
     }
-    writeToStagedTable(stagedTable, writeOptions, ident)
+    writeToStagedTable(stagedTable, logicalPlan, writeOptions, ident)
   }
 }
 
@@ -463,6 +488,7 @@ private[v2] trait AtomicTableWriteExec extends V2TableWriteExec {
 
   protected def writeToStagedTable(
       stagedTable: StagedTable,
+      logicalPlan: LogicalPlan,
       writeOptions: CaseInsensitiveStringMap,
       ident: Identifier): RDD[InternalRow] = {
     Utils.tryWithSafeFinallyAndFailureCallbacks({
@@ -476,6 +502,17 @@ private[v2] trait AtomicTableWriteExec extends V2TableWriteExec {
           val writtenRows = doWrite(batchWrite)
           stagedTable.commitStagedChanges()
           writtenRows
+
+        case v1Provider: V1RelationProvider
+            if classOf[CreatableRelationProvider].isAssignableFrom(v1Provider.relation.getClass) =>
+          v1Provider.relation.asInstanceOf[CreatableRelationProvider].createRelation(
+            sqlContext,
+            SaveMode.Overwrite,
+            writeOptions.asCaseSensitiveMap().asScala.toMap,
+            Dataset.ofRows(sqlContext.sparkSession, logicalPlan)
+          )
+          sparkContext.emptyRDD[InternalRow]
+
         case _ =>
           // Table does not support writes - staged changes are also rolled back below.
           throw new SparkException(

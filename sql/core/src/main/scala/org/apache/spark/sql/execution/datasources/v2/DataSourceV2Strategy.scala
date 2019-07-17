@@ -170,10 +170,10 @@ object DataSourceV2Strategy extends Strategy with PredicateHelper {
       catalog match {
         case staging: StagingTableCatalog =>
           AtomicCreateTableAsSelectExec(
-            staging, ident, parts, planLater(query), props, writeOptions, ifNotExists) :: Nil
+            staging, ident, parts, query, planLater(query), props, writeOptions, ifNotExists) :: Nil
         case _ =>
           CreateTableAsSelectExec(
-            catalog, ident, parts, planLater(query), props, writeOptions, ifNotExists) :: Nil
+            catalog, ident, parts, query, planLater(query), props, writeOptions, ifNotExists) :: Nil
       }
 
     case ReplaceTable(catalog, ident, schema, parts, props, orCreate) =>
@@ -192,6 +192,7 @@ object DataSourceV2Strategy extends Strategy with PredicateHelper {
             staging,
             ident,
             parts,
+            query,
             planLater(query),
             props,
             writeOptions,
@@ -201,6 +202,7 @@ object DataSourceV2Strategy extends Strategy with PredicateHelper {
             catalog,
             ident,
             parts,
+            query,
             planLater(query),
             props,
             writeOptions,
