@@ -256,7 +256,7 @@ class TestStagingInMemoryCatalog
 
     new TestStagedTable(
       ident,
-      new InMemoryTable(s"$name.${ident.quoted}", schema, properties),
+      new InMemoryTable(s"$name.${ident.quoted}", schema, properties, partitions),
       replaceIfExists)
   }
 

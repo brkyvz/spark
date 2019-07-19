@@ -17,7 +17,8 @@
 
 package org.apache.spark.sql.execution.datasources.v2
 
-import java.util.UUID
+import java.util
+import java.util.{Collections, UUID}
 
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
@@ -28,12 +29,13 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Dataset, SaveMode}
 import org.apache.spark.sql.catalog.v2.{Identifier, StagingTableCatalog, TableCatalog}
-import org.apache.spark.sql.catalog.v2.expressions.Transform
+import org.apache.spark.sql.catalog.v2.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, TableAlreadyExistsException}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.datasources.DataSourceUtils
 import org.apache.spark.sql.sources.{AlwaysTrue, CreatableRelationProvider, Filter}
 import org.apache.spark.sql.sources.v2.{StagedTable, SupportsWrite, TableProvider}
 import org.apache.spark.sql.sources.v2.writer.{BatchWrite, DataWriterFactory, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, WriteBuilder, WriterCommitMessage}
@@ -92,12 +94,18 @@ case class CreateTableAsSelectExec(
 
           doWrite(batchWrite)
 
-        case v1Provider: V1RelationProvider
-            if classOf[CreatableRelationProvider].isAssignableFrom(v1Provider.relation.getClass) =>
-          v1Provider.relation.asInstanceOf[CreatableRelationProvider].createRelation(
+        case v1Provider: V1RelationProvider =>
+          val options = new util.HashMap[String, String](writeOptions.asCaseSensitiveMap())
+          val columns = partitioning.map {
+            case IdentityTransform(FieldReference(Seq(name))) => name
+          }
+          options.put("path", v1Provider.v1Table.location.toString)
+          options.put(DataSourceUtils.PARTITIONING_COLUMNS_KEY,
+            DataSourceUtils.encodePartitioningColumns(columns))
+          v1Provider.relation.createRelation(
             sqlContext,
-            SaveMode.Overwrite,
-            writeOptions.asCaseSensitiveMap().asScala.toMap,
+            SaveMode.ErrorIfExists,
+            options.asScala.toMap,
             Dataset.ofRows(sqlContext.sparkSession, logicalPlan)
           )
           sparkContext.emptyRDD[InternalRow]
@@ -194,12 +202,18 @@ case class ReplaceTableAsSelectExec(
 
           doWrite(batchWrite)
 
-        case v1Provider: V1RelationProvider
-            if classOf[CreatableRelationProvider].isAssignableFrom(v1Provider.relation.getClass) =>
-          v1Provider.relation.asInstanceOf[CreatableRelationProvider].createRelation(
+        case v1Provider: V1RelationProvider =>
+          val options = writeOptions.asCaseSensitiveMap()
+          val columns = partitioning.map {
+            case IdentityTransform(FieldReference(Seq(name))) => name
+          }
+          options.put("path", v1Provider.v1Table.location.toString)
+          options.put(DataSourceUtils.PARTITIONING_COLUMNS_KEY,
+            DataSourceUtils.encodePartitioningColumns(columns))
+          v1Provider.relation.createRelation(
             sqlContext,
-            SaveMode.Overwrite,
-            writeOptions.asCaseSensitiveMap().asScala.toMap,
+            SaveMode.ErrorIfExists,
+            options.asScala.toMap,
             Dataset.ofRows(sqlContext.sparkSession, logicalPlan)
           )
           sparkContext.emptyRDD[InternalRow]
@@ -503,14 +517,21 @@ private[v2] trait AtomicTableWriteExec extends V2TableWriteExec {
           stagedTable.commitStagedChanges()
           writtenRows
 
-        case v1Provider: V1RelationProvider
-            if classOf[CreatableRelationProvider].isAssignableFrom(v1Provider.relation.getClass) =>
-          v1Provider.relation.asInstanceOf[CreatableRelationProvider].createRelation(
+        case v1Provider: V1RelationProvider =>
+          val options = new util.HashMap[String, String](writeOptions.asCaseSensitiveMap())
+          val columns = stagedTable.partitioning().map {
+            case IdentityTransform(FieldReference(Seq(name))) => name
+          }
+          options.put("path", v1Provider.v1Table.location.toString)
+          options.put(DataSourceUtils.PARTITIONING_COLUMNS_KEY,
+            DataSourceUtils.encodePartitioningColumns(columns))
+          v1Provider.relation.createRelation(
             sqlContext,
             SaveMode.Overwrite,
-            writeOptions.asCaseSensitiveMap().asScala.toMap,
+            options.asScala.toMap,
             Dataset.ofRows(sqlContext.sparkSession, logicalPlan)
           )
+          stagedTable.commitStagedChanges()
           sparkContext.emptyRDD[InternalRow]
 
         case _ =>

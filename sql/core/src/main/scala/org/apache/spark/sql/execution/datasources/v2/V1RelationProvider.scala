@@ -18,12 +18,12 @@
 package org.apache.spark.sql.execution.datasources.v2
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.sources.BaseRelation
+import org.apache.spark.sql.sources.{BaseRelation, CreatableRelationProvider}
 import org.apache.spark.sql.sources.v2.Table
 
 trait V2CatalogCompatibleV1Source
 
 trait V1RelationProvider extends Table {
-  val relation: BaseRelation
+  val relation: CreatableRelationProvider
   val v1Table: CatalogTable
 }

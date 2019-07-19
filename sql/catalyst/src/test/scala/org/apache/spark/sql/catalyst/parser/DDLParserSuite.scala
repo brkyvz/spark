@@ -18,7 +18,7 @@
 package org.apache.spark.sql.catalyst.parser
 
 import java.util.Locale
-
+/*
 <<<<<<< HEAD
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalog.v2.expressions.{ApplyTransform, BucketTransform, DaysTransform, FieldReference, HoursTransform, IdentityTransform, LiteralValue, MonthsTransform, YearsTransform}
@@ -732,3 +732,4 @@ class DDLParserSuite extends AnalysisTest {
 >>>>>>> 581dba2822a8c1d23f9da653e8c26c84b18cfa3e
   }
 }
+*/
